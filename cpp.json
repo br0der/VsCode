@@ -1,0 +1,52 @@
+{
+	"For loop": {
+		"prefix": "fr",
+		"body": [
+			"for(int $i = 0; $i < $n; $i++){",
+			"    $continue;",
+			"}"
+		],
+		"description": "Create a for loop"
+	},
+	"Print array/vector": {
+		"prefix": "pvec",
+		"body": [
+			"for(int $i = 0; $i < sz($lis); $i++) cout << $lis[$i] << ' ';",
+			"cout << ln;"
+		],
+		"description": "Create a fill loop"
+	},
+	"Enhanced for": {
+		"prefix": "efr",
+		"body": [
+			"for($int $elem : $lis){",
+			"    $continue;",
+			"}"
+		],
+		"description": "Create an enhanced for loop"
+	},
+	"Create an int and take it as input": {
+		"prefix": "ivar",
+		"body": [
+			"int $temp; cin >> $temp;",
+			""
+		],
+		"description": "Create a variable and take it as input"
+	},
+	"Create a string and take it as input": {
+		"prefix": "iss",
+		"body": [
+			"string $str; cin >> $str;",
+			""
+		],
+		"description": "Create a variable and take it as input"
+	},
+	"Vector input": {
+		"prefix": "ivec",
+		"body": [
+			"$vint $lis($n); for(int _ = 0; _ < $n; _++) cin >> $lis[_];",
+			""
+		],
+		"description": "Input a vector"
+	}
+}
