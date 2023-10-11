@@ -1,0 +1,6 @@
+#lang htdp/bsl
+(require 2htdp/image)
+(require 2htdp/universe)
+(require racket/bool)
+
+(define-struct posn (x y [z #:auto]))

@@ -1,0 +1,21 @@
+#lang htdp/isl+
+
+(define Positive (signature (predicate (lambda (x) (and (number? x) (positive? x))))))
+(define-struct fias [min max step])
+(define AFIAS (signature [FiasOf Number Number Positive]))
+; where (make-fias min max step) represents all numbers
+; of the form min + (k * step), where k is a natural number,
+; such that min + (k * step) < max.
+ 
+(define FIAS-EMPTY (make-fias 1 1 0.25)) ; empty sequence, as min >= max
+(define FIAS-1 (make-fias 0 1 0.25)) ; sequence with the elements (0, .25, .5, .75)
+ 
+; fias-temp : AFIAS -> ?
+(define (fias-temp fias)
+  (... (fias-min fias) ... (fias-max fias) ... (fias-step fias) ...))
+
+(: empty-fias? (AFIAS -> Boolean))
+; determines if the given FIAS is empty
+(define (empty-fias? fias)
+  (>= (fias-min fias) (fias-max fias)))
+

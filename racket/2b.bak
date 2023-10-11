@@ -1,0 +1,8 @@
+#lang htdp/bsl
+
+(define-struct position (x y))
+
+
+(define (dist pos)
+  (sqrt(+ (* pos-x pos-x) (* pos-y pos-y)))
+)

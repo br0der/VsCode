@@ -1,0 +1,8 @@
+#lang htdp/bsl
+; A Building is one of:
+; - "ground"
+; - (make-story Number PosInt String Building)
+(define-struct story [height rooms color below])
+; and represents either the ground story,
+; or a story with a height, number of rooms, color, and
+;   the rest of the building beneath it

@@ -1,0 +1,14 @@
+#lang htdp/isl
+
+(define-struct next [prev])
+(define Nat (signature (mixed (enum 0) [NextOf Nat])))
+ 
+ (define N0 0)
+ (define N1 (make-next nat0))
+ (define N2 (make-next nat1))
+ 
+ (: nat-temp (Nat -> Any))
+ (define (nat-temp nat)
+   (cond
+     [(and (number? nat) (zero? nat)) ...]
+     [(next? nat) (... (nat-temp (next-prev nat)) ...)]))
