@@ -43,22 +43,20 @@ int main()
         freopen("./data/input.txt","w", stdout);
         // freopen("./data/alcatraz_tiny.in","w", stdout);
     #endif
-    // cout << 1 << endl;
-    // cout << 3000 << endl;
-    // srand((unsigned)time(NULL));
-    // // cout << RAND_MAX << endl;
-    // int clauses = 100000, variables = 300001;
-    // for(int i = 0; i < clauses; i++){
-    //     int a = (experimental::randint(-variables, variables-1)), b = (experimental::randint(-variables, variables-1));
-    //     if(a>=0) a++;
-    //     if(b>=0) b++;
-    //     cout << a << ' ' << b << endl;
-    // }
-    // cout << 0 << endl;
-    // cout << endl << 'a' << endl;
-    for(int i = 0; i < 1000000; i++){
-        cout << "a";
+    int s = 6;
+    cout << s << ' ' << s << ' ' << 1 << endl;
+    for(int i = 0; i < s-1; i++){
+        for(int j = 0; j < s; j++){
+            cout << "A ";
+        }
+        cout << endl;
+    }
+    for(int i = 0; i < s; i++){
+        cout << "B ";
     }
     cout << endl;
+    for(int i = 0; i < s; i++){
+        cout << "C";
+    }
     return 0;
 }

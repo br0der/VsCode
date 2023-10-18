@@ -1,0 +1,16 @@
+#lang htdp/isl+
+(define (Comparison X) (signature (X X -> Number)))
+; with a negative output indicating the first parameter comes first,
+;      a positive output indicating the first parameter comes second,
+;      and 0 indicating they are equal
+ 
+(define-struct leaf [])
+(define-struct node [key info smaller bigger])
+ 
+(define (BST X Y) (signature (mixed Leaf [NodeOf X Y [BST X Y] [BST X Y]])))
+; and represents either an empty BST or
+; a node with key, info, and two subtrees with smaller/larger keys, respectively
+ 
+(define-struct treemap [comp bst])
+(define (ATreemap X Y) (signature [TreemapOf [Comparison X] [BST X Y]]))
+; and represents a treemap with a searchable bst with comp comparing over type x
