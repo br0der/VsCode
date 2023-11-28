@@ -1,0 +1,6 @@
+#lang htdp/isl+
+(define-struct leaf [val])
+(define-struct node [left right])
+ 
+(define (BinTree X) (signature (mixed [LeafOf X] [NodeOf [BinTree X] [BinTree X]])))
+; represents a (full) binary tree with values (of type X) at the leaves of the tree

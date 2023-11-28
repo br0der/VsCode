@@ -79,7 +79,10 @@ void solve()
     matrix.push_back({count(all(a), 'T'), count(all(c), 'T'), count(all(t), 'T'), count(all(g), 'T')});
     matrix.push_back({count(all(a), 'G'), count(all(c), 'G'), count(all(t), 'G'), count(all(g), 'G')});
     ll n; cin >> n;
-    vvlong out = expo(matrix, {{count(all(seq), 'A')}, {count(all(seq), 'C')}, {count(all(seq), 'T')}, {count(all(seq), 'G')}}, n);
+    vvlong out = expo(matrix, {{count(all(seq), 'A')}, 
+                               {count(all(seq), 'C')}, 
+                               {count(all(seq), 'T')}, 
+                               {count(all(seq), 'G')}}, n);
     
     for(int i = 0; i < sz(out); i++){
         cout << out[i][0] << ' ';

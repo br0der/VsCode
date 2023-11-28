@@ -1,0 +1,51 @@
+#lang htdp/isl+
+(define GameOfLife (signature [ListOf [ListOf Boolean]]))
+; where the length of the outer list is the same as all of the inner lists
+; and represents alive (#t) and dead (#f) cells
+(: TINY-GAME GameOfLife)
+(define TINY-GAME
+  '((#f #f #f #f)
+    (#f #t #t #f)
+    (#f #t #f #f)
+    (#f #f #f #f)))
+(: TINY-GAME+1 GameOfLife)
+(define TINY-GAME+1
+  '((#f #f #f #f)
+    (#f #t #t #f)
+    (#f #t #t #f)
+    (#f #f #f #f)))
+(: neighbors (Number Number GameOfLife -> [ListOf Boolean]))
+; The neighbors of i, j in gol (i = row, j = column)
+(define (neighbors i j gol)
+  (list (get-cell (sub1 i) (sub1 j) gol)
+        (get-cell (sub1 i) j        gol)
+        (get-cell (sub1 i) (add1 j) gol)
+        (get-cell i        (sub1 j) gol)
+        (get-cell i        (add1 j) gol)
+        (get-cell (add1 i) (sub1 j) gol)
+        (get-cell (add1 i) j        gol)
+        (get-cell (add1 i) (add1 j) gol)))
+(check-expect (neighbors 1 1 TINY-GAME)
+              (list #f #f #f
+                    #f    #t
+                    #f #t #f))
+(check-expect (neighbors 3 1 TINY-GAME)
+              (list #f #t #f
+                    #f    #f
+                    #f #f #f))
+ 
+(: get-cell (Number Number GameOfLife -> Boolean))
+; The value of the cell at y, x (looping around the ends of the list if necessary)
+(define (get-cell y x gol)
+  (local [(define n     (length gol))
+          (define y-mod (modulo y n))
+          (define x-mod (modulo x n))]
+    (list-ref (list-ref gol y-mod) x-mod)))
+(check-expect (get-cell 0 0 TINY-GAME) #f)
+(check-expect (get-cell 4 4 TINY-GAME) #f)
+(check-expect (get-cell 1 2 TINY-GAME) #t)
+(check-expect (get-cell 5 6 TINY-GAME) #t)
+
+(define (count-bool lob)
+  (foldr (lambda (x) x) add1 0 lob))
+(check-expect (count-bool (first tiny-game)))

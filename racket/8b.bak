@@ -1,0 +1,9 @@
+#lang htdp/isl+
+
+(define (topsy-turvy sexp)
+  (cond
+    [(symbol? sexp) sexp]
+    [(cons? sexp) (cons (topsy-turvy (rest sexp)) (topsy-turvy (first sexp)))]))
+
+(define EX1 '(X Y (Z A) B))
+(check-expect (topsy-turvy EX1) '(B (A Z) Y X))

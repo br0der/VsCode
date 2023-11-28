@@ -1,0 +1,10 @@
+#lang htdp/isl+
+(define-struct graph [nodes neighbors])
+(define AGraph (signature [GraphOf [ListOf Symbol] (Symbol -> [ListOf Symbol])]))
+; and represents the nodes and edges in a graph.
+; All symbols that represent nodes are assumed to be unique
+; All symbols returned by (graph-neighbors _) will also be unique
+; All symbols returned by (graph-neighbors _) are assumed to be in nodes
+
+(define (neighbor-of? g s1 s2)
+  (member? ((graph-neighbors g) s1) s2))

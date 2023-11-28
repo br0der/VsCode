@@ -43,20 +43,14 @@ int main()
         freopen("./data/input.txt","w", stdout);
         // freopen("./data/alcatraz_tiny.in","w", stdout);
     #endif
-    int s = 6;
-    cout << s << ' ' << s << ' ' << 1 << endl;
-    for(int i = 0; i < s-1; i++){
-        for(int j = 0; j < s; j++){
-            cout << "A ";
+    int n = 500;
+    cout << n << endl;
+    for(int i = 0; i < n; i++){
+        for(int j = 0; j < n; j++){
+            if(i==j) cout << 0 << ' ';
+            else cout << 1 << ' ';
         }
         cout << endl;
-    }
-    for(int i = 0; i < s; i++){
-        cout << "B ";
-    }
-    cout << endl;
-    for(int i = 0; i < s; i++){
-        cout << "C";
     }
     return 0;
 }

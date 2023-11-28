@@ -1,0 +1,1303 @@
+#lang htdp/isl+
+
+(require 2htdp/image)
+(require 2htdp/universe)
+
+(define Posn (signature (predicate posn?)))
+(define Image (signature (predicate image?)))
+(define KeyEvent (signature (predicate key-event?)))
+
+;                          ╔═══════════╗
+; ------------------------ ║ Refactors ║ ------------------------
+;                          ╚═══════════╝
+; IO-Wire: kept as-is.
+; Gate: Changed the NOT/AND/OR and UP/RIGHT/DOWN/LEFT enums to use symbols instead of numbers
+;   so things are clearer when printed to console as errors.
+; Cell: Added more examples to better reflect the (make-cell charge body) format, which is not
+;   how it was when the examples were originally written. Also changed the EMPTY/CPLATE enum
+;   to use symbols instead of numbers.
+; Cell Images: kept as-is.
+; Cell Sets and Grid: kept as-is.
+; Parse Cell/Grid: moved higher in the code so it can be used for more tests. Also redone so
+;   that it checks for input validity. All valid inputs are symbols of length three, so that
+;   when written in a grid format they all line up, instead of having varying lengths that
+;   make rows and columns hard to visualize.
+; Grid Rendering: kept as-is.
+; Grid Helpers: Functions remained the same, but tests were altered to be more readable by using
+;   "parse-grid" and "parse-cell".
+; Grid Updating: Added a helper function for updating the charge of a gate, thus simplifying the
+;   "update-cell" function. Also updated tests to use "parse-grid" for readability.
+
+
+;                          ╔═════════╗
+; ------------------------ ║ Helpers ║ ------------------------
+;                          ╚═════════╝
+
+; PairOf is a signature which matches a 2-element list where the first element is
+;   of one type and the second is of a second type. I don't know how to make that
+;   checked signature
+; (: match (%A [ListOf [PairOf %A %B]] -> (mixed %B (enum #f))))
+; Takes a value and a list of pairs. Returns the second item of the first pair where the left
+;   item of the pair is equal to the value. If no such pair exists it returns #f
+(define match (compose (λ (pair) (if (false? pair) #f (second pair))) assoc))
+
+(check-expect (match 'A '((A 1) (B 2) (C 3))) 1)
+(check-expect (match 'C '((A 1) (B 2) (C 3))) 3)
+(check-expect (match 'D '((A 1) (B 2) (C 3))) #f)
+
+; (: match-else (%A [ListOf [PairOf %A %B]] %B -> (mixed %B (enum #f))))
+; Equivalent to "match", but takes a second value to return instead of #f if no pair is found
+; that matches the first value
+(define (match-else val pairs else-val)
+  ((compose (λ (pair) (if (false? pair) else-val (second pair))) assoc) val pairs))
+
+(check-expect (match-else 'A '((A 1) (B 2) (C 3)) "banana") 1)
+(check-expect (match-else 'C '((A 1) (B 2) (C 3)) "banana") 3)
+(check-expect (match-else 'D '((A 1) (B 2) (C 3)) "banana") "banana")
+
+(: list-set ([ListOf Any] Number Any -> [ListOf Any]))
+; (list-set l i x) returns 'l' but with the element at index 'i' set to 'x'
+(define (list-set l i x)
+  (cond [(empty? l) '()]
+        [(= i 0) (cons x (rest l))]
+        [else (cons (first l) (list-set (rest l) (sub1 i) x))]))
+
+(check-expect (list-set '() 4 "hi") '())
+(check-expect (list-set '(1 2) 4 "hi") '(1 2))
+(check-expect (list-set (range 0 5 1) 3 "hi") '(0 1 2 "hi" 4))
+
+;                          ╔═════════╗
+; ------------------------ ║ IO-Wire ║ ------------------------
+;                          ╚═════════╝
+
+(define-struct io-wire [id is-input])
+(define A-IO-Wire (signature [IoWireOf String Boolean]))
+; Represents an input-output wire. The "id" is a string which acts as a unique
+;   identifier for the wire, and "is-input" is a boolean which is true if it's
+;   an input, otherwise it's an output
+; Note that whether an IO-Wire is + or - is stored by the charge component of
+;   the cell struct
+(define EX-IO-IN (make-io-wire "X" #t))
+(define EX-IO-OUT (make-io-wire "Y" #f))
+
+(define (template-io-wire w)
+  (if (io-wire-is-input w) (... (io-wire-id w) ...) (... (io-wire-id w) ...)))
+
+;                          ╔══════╗
+; ------------------------ ║ Gate ║ ------------------------
+;                          ╚══════╝
+
+(define NOT 'not)
+(define AND 'and)
+(define OR 'or)
+(define UP 'up)
+(define RIGHT 'right)
+(define DOWN 'down)
+(define LEFT 'left)
+(define-struct gate (type dir))
+(define A-Gate (signature [GateOf (enum AND OR NOT) (enum UP DOWN LEFT RIGHT)]))
+; Represents a logic gate. The "type" identifies the type of gate, and
+;   the "dir" identifies the direction it's facing
+(define EX-GATE-AND (make-gate AND UP))
+(define EX-GATE-OR (make-gate OR DOWN))
+(define EX-GATE-NOT (make-gate NOT LEFT))
+(define EX-GATE-EXTRA (make-gate AND RIGHT))
+
+(define (template-gate g)
+  (cond [(symbol=? (gate-type g) NOT) (... (gate-dir g) ...)]
+        [(symbol=? (gate-type g) AND) (... (gate-dir g) ...)]
+        [(symbol=? (gate-type g) OR)  (... (gate-dir g) ...)]))
+
+;                          ╔══════╗
+; ------------------------ ║ Cell ║ ------------------------
+;                          ╚══════╝
+
+(define EMPTY 'empty)
+(define CPLATE 'cplate)
+(define-struct cell [charge body])
+(define A-Cell (signature [CellOf (enum -1 0 1) (mixed A-IO-Wire A-Gate (enum CPLATE EMPTY))]))
+; Represents a cell on the grid, which can be one of four things,
+;   an IO Wire, a Gate, a conductive plate, or empty
+; The cell can also have charge: 1 for positive, -1 for negative, and 0 for none
+; Cells will transfer and transform charge passed from their neighbors
+(define EX-CELL-CPLATE (make-cell 0 CPLATE))
+(define EX-CELL-EMPTY (make-cell 0 EMPTY))
+(define EX-CELL-IO-IN (make-cell 1 EX-IO-IN))
+(define EX-CELL-IO-OUT (make-cell 0 EX-IO-OUT))
+(define EX-CELL-GATE-AND (make-cell 0 EX-GATE-AND))
+(define EX-CELL-GATE-NOT (make-cell 0 EX-GATE-NOT))
+
+(define (template-cell c)
+  (cond [(io-wire? (cell-body c))        (... (template-io-wire c) ... (cell-charge c) ...)]
+        [(gate? (cell-body c))           (... (template-gate c) ... (cell-charge c) ...)]
+        [(symbol=? (cell-body c) EMPTY)  (... (cell-charge c) ...)]
+        [(symbol=? (cell-body c) CPLATE) (... (cell-charge c) ...)]))
+
+;                          ╔═════════════╗
+; ------------------------ ║ Cell Images ║ ------------------------
+;                          ╚═════════════╝
+
+; Standard size of cells
+(define CELL-SIZE 75)
+
+; Base images for cell image creation
+(define IMG-BORDER (rectangle CELL-SIZE CELL-SIZE "outline" "black"))
+(define IMG-EMPTY (rectangle CELL-SIZE CELL-SIZE "solid" "darkgray"))
+(define IMG-POSCHARGE (rectangle CELL-SIZE CELL-SIZE "solid" "gold"))
+(define IMG-NEGCHARGE (rectangle CELL-SIZE CELL-SIZE "solid" "red"))
+(define IMG-NOCHARGE (rectangle CELL-SIZE CELL-SIZE "solid" "lightgray"))
+(define IMG-ARROW (above/align "middle"
+                               (triangle (* 0.2 CELL-SIZE) "solid" "black")
+                               (rectangle (* 0.07 CELL-SIZE) (* 0.2 CELL-SIZE) "solid" "black")))
+
+(: io-wire->image (A-IO-Wire Image -> Image))
+; Makes the image representing an IO wire
+(define (io-wire->image w bg)
+  (overlay (text (io-wire-id w) (round (* CELL-SIZE 0.6)) "black") bg))
+
+(check-expect (io-wire->image EX-IO-IN IMG-POSCHARGE)
+              (overlay (text "X" (round (* CELL-SIZE 0.6)) "black") IMG-POSCHARGE))
+(check-expect (io-wire->image EX-IO-OUT IMG-NOCHARGE)
+              (overlay (text "Y" (round (* CELL-SIZE 0.6)) "black") IMG-NOCHARGE))
+
+(: gate->image (A-Gate Image -> Image))
+; Makes the image representing a gate
+(define (gate->image g bg)
+  (overlay/align/offset
+   "left" "top"
+   (text (match (gate-type g) '((not "NOT") (and "AND") (or "OR")))
+         (round (* 0.2 CELL-SIZE)) "black")
+   (* -0.075 CELL-SIZE) (* -0.075 CELL-SIZE)
+   (overlay (rotate (match (gate-dir g) '((up 0) (right -90) (down 180) (left 90)))
+                    IMG-ARROW)
+            bg)))
+
+(check-expect (gate->image EX-GATE-AND IMG-NOCHARGE)
+              (overlay/align/offset "left" "top"
+                                    (text "AND" (round (* 0.2 CELL-SIZE)) "black")
+                                    (* -0.075 CELL-SIZE) (* -0.075 CELL-SIZE)
+                                    (overlay IMG-ARROW
+                                             IMG-NOCHARGE)))
+(check-expect (gate->image EX-GATE-OR IMG-POSCHARGE)
+              (overlay/align/offset "left" "top"
+                                    (text "OR" (round (* 0.2 CELL-SIZE)) "black")
+                                    (* -0.075 CELL-SIZE) (* -0.075 CELL-SIZE)
+                                    (overlay (rotate 180 IMG-ARROW)
+                                             IMG-POSCHARGE)))
+(check-expect (gate->image EX-GATE-NOT IMG-NEGCHARGE)
+              (overlay/align/offset "left" "top"
+                                    (text "NOT" (round (* 0.2 CELL-SIZE)) "black")
+                                    (* -0.075 CELL-SIZE) (* -0.075 CELL-SIZE)
+                                    (overlay (rotate 90 IMG-ARROW)
+                                             IMG-NEGCHARGE)))
+(check-expect (gate->image EX-GATE-EXTRA IMG-NOCHARGE)
+              (overlay/align/offset "left" "top"
+                                    (text "AND" (round (* 0.2 CELL-SIZE)) "black")
+                                    (* -0.075 CELL-SIZE) (* -0.075 CELL-SIZE)
+                                    (overlay (rotate -90 IMG-ARROW)
+                                             IMG-NOCHARGE)))
+
+(: cell->image (A-Cell -> Image))
+; Makes the image representing the data contained in a cell. All cell
+;   images have dimensions CELL-SIZE x CELL-SIZE
+(define (cell->image c)
+  (overlay IMG-BORDER
+           (let ([bgImg (cond [(positive? (cell-charge c)) IMG-POSCHARGE]
+                              [(negative? (cell-charge c)) IMG-NEGCHARGE]
+                              [(zero? (cell-charge c)) IMG-NOCHARGE])])
+             (cond [(io-wire? (cell-body c)) (io-wire->image (cell-body c) bgImg)]
+                   [(gate? (cell-body c)) (gate->image (cell-body c) bgImg)]
+                   [(symbol=? (cell-body c) EMPTY ) IMG-EMPTY]
+                   [(symbol=? (cell-body c) CPLATE) bgImg]))))
+
+(check-expect (cell->image (make-cell 1 EX-IO-IN))
+              (overlay IMG-BORDER (io-wire->image EX-IO-IN IMG-POSCHARGE)))
+(check-expect (cell->image (make-cell -1 EX-GATE-AND))
+              (overlay IMG-BORDER (gate->image EX-GATE-AND IMG-NEGCHARGE)))
+(check-expect (cell->image EX-CELL-CPLATE) (overlay IMG-BORDER IMG-NOCHARGE))
+(check-expect (cell->image EX-CELL-EMPTY) (overlay IMG-BORDER IMG-EMPTY))
+
+#; (above (apply beside (map (lambda (c) (cell->image (make-cell 0 c)))
+                             (list CPLATE EMPTY EX-IO-IN EX-IO-OUT)))
+          (apply beside (map (lambda (c) (cell->image (make-cell -1 c)))
+                             (list EX-GATE-NOT EX-GATE-AND EX-GATE-OR EX-GATE-EXTRA))))
+
+;                          ╔═════════════════════╗
+; ------------------------ ║ Cell Sets and Grids ║ ------------------------
+;                          ╚═════════════════════╝
+
+(: cell-set-equal? ([ListOf A-Cell] [ListOf A-Cell] -> Boolean))
+; Takes in two lists and returns #t if the lists contain exactly the same elements,
+;   regardless of order, otherwise #f
+(define (cell-set-equal? loc1 loc2)
+  (if (or (empty? loc1) (empty? loc2))
+      (and (empty? loc1) (empty? loc2))
+      (and (member? (first loc1) loc2) (cell-set-equal? (rest loc1) (remove (first loc1) loc2)))))
+
+(define C1 '())
+(define C2 '())
+(define C3 (map (lambda (c) (make-cell 0 c)) (list EX-GATE-OR EX-GATE-AND EX-GATE-OR)))
+(define C4 (map (lambda (c) (make-cell 0 c)) (list EX-GATE-AND EX-GATE-NOT EX-GATE-EXTRA)))
+(define C5 (map (lambda (c) (make-cell 0 c)) (list EX-GATE-AND EX-GATE-OR EX-GATE-OR)))
+(define C6 (map (lambda (c) (make-cell 1 c)) (list EMPTY EX-IO-IN)))
+(define C7 (map (lambda (c) (make-cell 1 c)) (list EX-IO-IN EMPTY)))
+(define C8 (map (lambda (c) (make-cell 1 c)) (list EMPTY EMPTY EMPTY EX-IO-IN)))
+
+(check-expect (cell-set-equal? C1 C2) #t)
+(check-expect (cell-set-equal? C3 C5) #t)
+(check-expect (cell-set-equal? C4 C3) #f)
+(check-expect (cell-set-equal? C7 C6) #t)
+(check-expect (cell-set-equal? C7 C8) #f)
+(check-expect (cell-set-equal? C8 C7) #f)
+
+; Alternative grid signature that enforces a rectangular size.
+; Unfortunately it is quite slow.
+#; (define (grid? g)
+     (and (list? g)
+          (or (zero? (length g))
+              (and (andmap list? g)
+                   (let ([len (length (first g))])
+                     (andmap (λ (row) (= len (length row))) g))))))
+; (define Grid (signature (predicate grid?)))
+
+(define Grid (signature [ListOf [ListOf A-Cell]]))
+; Represents a grid of cells as a two-dimensional list. The index in the outer list is the
+;   y-coordinate, and the index in the inner list is the x-coordinate
+; Assumes that all inner lists have the same length
+; Note that grid examples are defined after the function "make-grid"
+(define (template-gridrow gr)
+  (cond [(empty? gr) ...]
+        [(cons? gr) (... (first gr) ...
+                         (template-gridrow (rest gr)) ...)]))
+(define (template-grid g)
+  (cond [(empty? g) ...]
+        [(cons? g) (... (template-gridrow (first g)) ...
+                        (template-grid (rest g)) ...)]))
+
+(: make-grid (Number Number -> Grid))
+; Generates an grid of empty cells with a given width and height
+(define (make-grid w h)
+  (make-list h (make-list w (make-cell 0 EMPTY))))
+  
+(check-expect (make-grid 0 0) '())
+(check-expect (make-grid 1 1) `((,(make-cell 0 EMPTY))))
+(check-expect (make-grid 3 2) (map (lambda (row) (map (lambda (c) (make-cell 0 c)) row))
+                                   `((,EMPTY ,EMPTY ,EMPTY) (,EMPTY ,EMPTY ,EMPTY))))
+
+(define EX-GRID-0 '(() ()))
+(define EX-GRID-1 (make-grid 1 1))
+(define EX-GRID-2 (make-grid 5 4))
+(define EX-GRID-3
+  (map (lambda (row) (map (lambda (c) (make-cell 0 c)) row))
+       `((,EMPTY ,(make-io-wire "X" #t) ,EMPTY ,(make-io-wire "Y" #t) ,EMPTY)
+         (,EMPTY ,CPLATE ,EMPTY ,EMPTY ,EMPTY)
+         (,EMPTY ,(make-gate NOT DOWN) ,EMPTY ,EMPTY ,EMPTY)
+         (,EMPTY ,(make-io-wire "Z" #f) ,EMPTY ,EMPTY ,EMPTY))))
+(define EX-GRID-4
+  (map (lambda (row) (map (lambda (c) (make-cell 0 c)) row))
+       `((,CPLATE ,(make-io-wire "A" #t) ,(make-gate OR DOWN)
+                  ,(make-io-wire "B" #t) ,CPLATE ,CPLATE ,CPLATE)
+         (,CPLATE ,EMPTY ,CPLATE ,EMPTY ,EMPTY ,EMPTY ,CPLATE)
+         (,CPLATE ,EMPTY ,(make-gate AND RIGHT) ,CPLATE ,(make-io-wire "Z" #f) ,EMPTY ,CPLATE)
+         (,CPLATE ,EMPTY ,(make-gate NOT UP) ,EMPTY ,EMPTY ,EMPTY ,CPLATE)
+         (,CPLATE ,CPLATE ,(make-gate AND UP) ,CPLATE ,CPLATE ,CPLATE ,CPLATE))))
+(define EX-GRID-5 (list (list (make-cell 1 (make-io-wire "X" #t))
+                              (make-cell 0 EMPTY)
+                              (make-cell 1 (make-io-wire "Z" #f)))
+                        (list (make-cell -1 (make-gate AND RIGHT))
+                              (make-cell 1 (make-gate NOT RIGHT))
+                              (make-cell 1 CPLATE))
+                        (list (make-cell -1 CPLATE)
+                              (make-cell 1 (make-gate NOT LEFT))
+                              (make-cell 1 (make-io-wire "Y" #t)))))
+
+;                          ╔═════════════════╗
+; ------------------------ ║ Parse Cell/Grid ║ ------------------------
+;                          ╚═════════════════╝
+
+(define SExp (signature (mixed Number String Boolean Symbol [ListOf SExp])))
+
+(: parse-cell (SExp -> A-Cell))
+; Parses a simplified s-expression representation of a cell into an actual cell
+; To make the grid look neat, all cells are represented by a symbol of three parts.
+; The first part is always + for positive, - for negative, or . for zero
+; A gate is represented by a pair:
+;  - The first element is A, O, or N for AND, OR, or NOT, respectively
+;  - The second element is U, D, L, or R for UP, DOWN, LEFT, or RIGHT, respectively
+;  - Examples: '+AD, '-OD, '.NL, '.AR
+; An io wire is represented by a pair:
+;  - The first element is I or X for an input or output, respectively
+;  - The second is a single characteer, the name of the input/output
+;  - Examples: '+IX, '-IY, '.XZ
+; An empty cell is '+EE, '-EE, or '.EE (although charge is unimportant for an empty cell)
+; Update from the future: '+.., '-.., and '... are now also valid symbols for empty because
+;   they make the grid sexp appear less cluttered
+; A conductive plate is '+CC, '-CC, '.CC
+(define (parse-cell c)
+  (if (symbol? c)
+      (let ([parts (map string->symbol (explode (symbol->string c)))])
+        (if (= 3 (length parts))
+            (let ([chg (match (first parts) '((+ 1) (- -1) (|.| 0)))]
+                  [type (second parts)]
+                  [info (third parts)])
+              (cond [(false? chg) (error "Cell S-Exp has invalid charge")]
+                    [(and (member? type '(A O N)) (member? info '(U D L R)))
+                     (make-cell chg
+                                (make-gate (match type `((A ,AND) (O ,OR) (N ,NOT)))
+                                           (match info `((U ,UP) (D ,DOWN) (L ,LEFT) (R ,RIGHT)))))]
+                    [(member? type '(I X))
+                     (make-cell chg
+                                (make-io-wire (symbol->string info)
+                                              (match type '((I #t) (X #f)))))]
+                    [(andmap symbol=? `(,type ,info) '(C C)) (make-cell chg CPLATE)]
+                    [(andmap symbol=? `(,type ,info) '(E E)) (make-cell chg EMPTY)]
+                    [(andmap symbol=? `(,type ,info) '(|.| |.|)) (make-cell chg EMPTY)]
+                    [else (error "Cell S-Exp contains invalid parts")]))
+            (error "Cell S-Exp must have three parts, not: " c)))
+      (error "Cell S-Exp must be a symbol, not: " c)))
+
+(check-expect (parse-cell '+AD) (make-cell 1 (make-gate AND DOWN)))
+(check-expect (parse-cell '-OU) (make-cell -1 (make-gate OR UP)))
+(check-expect (parse-cell '.NL) (make-cell 0 (make-gate NOT LEFT)))
+(check-expect (parse-cell '+IX) (make-cell 1 (make-io-wire "X" #t)))
+(check-expect (parse-cell '.XY) (make-cell 0 (make-io-wire "Y" #f)))
+(check-expect (parse-cell '-CC) (make-cell -1 CPLATE))
+(check-expect (parse-cell '.EE) (make-cell 0 EMPTY))
+(check-expect (parse-cell '...) (make-cell 0 EMPTY))
+(check-error (parse-cell "bananas"))
+(check-error (parse-cell 'E.E))
+(check-error (parse-cell '.CCC))
+(check-error (parse-cell '+AQ))
+(check-error (parse-cell '+VL))
+
+(: parse-grid (SExp -> Grid))
+; The input S-expression should be a list of rows, each row being a list of S-expressions
+;   representing cells, and all rows having the same length. This is converted to a grid
+(define (parse-grid s)
+  (if (and (list? s)
+           (andmap list? s)
+           (let ([len (length (first s))]) (andmap (λ (row) (= len (length row))) s)))
+      (map (lambda (row) (map parse-cell row)) s)
+      (error "Cell S-Exp must be a list of equal length lists")))
+
+(check-expect (parse-grid '((.CC .IA .OD .IB .CC .CC .CC)
+                            (.CC ... .CC ... ... ... .CC)
+                            (.CC ... .AR .CC .XZ ... .CC)
+                            (.CC ... .NU ... ... ... .CC)
+                            (.CC .CC .AU .CC .CC .CC .CC)))
+              EX-GRID-4)
+(check-expect (parse-grid '((+IX .EE +XZ)
+                            (-AR +NR +CC)
+                            (-CC +NL +IY)))
+              EX-GRID-5)
+(check-error (parse-grid "bananas"))
+(check-error (parse-grid '("list" "of" "bananas")))
+(check-error (parse-grid '((+IX .EE +XZ)
+                           (-AR +NR)
+                           (-CC +NL +IY))))
+
+;                          ╔════════════════╗
+; ------------------------ ║ Grid Rendering ║ ------------------------
+;                          ╚════════════════╝
+
+(: row->image ([ListOf A-Cell] -> Image))
+; Draws a list of cells in a row. An empty row (empty list) is drawn as a single empty cell
+(define (row->image r)
+  (cond [(empty? r) (cell->image (make-cell 0 EMPTY))]
+        [(= 1 (length r)) (cell->image (first r))]
+        [else (apply beside (map cell->image r))]))
+
+(check-expect (row->image '()) (cell->image (make-cell 0 EMPTY)))
+(check-expect (row->image `(,(make-cell 0 EX-IO-IN))) (cell->image (make-cell 0 EX-IO-IN)))
+(check-expect (row->image (first EX-GRID-3))
+              (beside (cell->image (make-cell 0 EMPTY))
+                      (cell->image (make-cell 0 (make-io-wire "X" #t)))
+                      (cell->image (make-cell 0 EMPTY))
+                      (cell->image (make-cell 0 (make-io-wire "Y" #t)))
+                      (cell->image (make-cell 0 EMPTY))))
+
+(: grid->image (Grid -> Image))
+; Draws all of the cells in a grid, placing them in a grid pattern. Empty rows are drawn as
+; single empty cells, and an empty grid is drawn as a single empty cell
+(define (grid->image g)
+  (cond [(empty? g) (cell->image (make-cell 0 EMPTY))]
+        [(= 1 (length g)) (row->image (first g))]
+        [else (apply above (map row->image g))]))
+
+(check-expect (grid->image EX-GRID-0)
+              (above (cell->image (make-cell 0 EMPTY)) (cell->image (make-cell 0 EMPTY))))
+(check-expect (grid->image EX-GRID-1) (cell->image (make-cell 0 EMPTY)))
+(check-expect (grid->image EX-GRID-3)
+              (above (row->image (car EX-GRID-3))
+                     (row->image (cadr EX-GRID-3))
+                     (row->image (caddr EX-GRID-3))
+                     (row->image (cadddr EX-GRID-3))))
+
+;                          ╔══════════════╗
+; ------------------------ ║ Grid Helpers ║ ------------------------
+;                          ╚══════════════╝
+
+(: point-in-grid? (Grid Posn -> Boolean))
+; Returns #t if a posn represents a valid point in a grid, otherwise #f
+(define (point-in-grid? g p)
+  (and (>= (posn-x p) 0) (>= (posn-y p) 0)
+       (< (posn-y p) (length g)) (< (posn-x p) (length (list-ref g (posn-y p))))))
+
+(check-expect (point-in-grid? EX-GRID-0 (make-posn 0 0)) #f)
+(check-expect (point-in-grid? EX-GRID-2 (make-posn -1 3)) #f)
+(check-expect (point-in-grid? EX-GRID-2 (make-posn 3 -2)) #f)
+(check-expect (point-in-grid? EX-GRID-3 (make-posn 2 3)) #t)
+(check-expect (point-in-grid? EX-GRID-3 (make-posn 5 2)) #f)
+
+(: get-cell (Grid Posn -> (mixed A-Cell (enum #f))))
+; Takes in a grid and a posn and returns the cell in that position
+;   or #false if the posn is outside the grid bounds
+(define (get-cell grid pos)
+  (if (point-in-grid? grid pos)
+      (list-ref (list-ref grid (posn-y pos)) (posn-x pos))
+      #f))
+
+(check-expect (get-cell EX-GRID-3 (make-posn -3 -4)) #f)
+(check-expect (get-cell EX-GRID-3 (make-posn 2 4)) #f)
+(check-expect (get-cell EX-GRID-3 (make-posn 1 0)) (parse-cell '.IX))
+(check-expect (get-cell EX-GRID-3 (make-posn 1 2)) (parse-cell '.ND))
+
+(: set-cell (Grid Posn Cell -> (mixed Grid (enum #f))))
+; Takes in a grid, a posn and a new cell, and returns repaces the cell at that posn
+;   with the new cell, unless the posn is outside the grid bounds, in which case it
+;   returns #f
+(define (set-cell grid pos cell)
+  (if (point-in-grid? grid pos)
+      (list-set grid (posn-y pos) (list-set (list-ref grid (posn-y pos)) (posn-x pos) cell))
+      #f))
+         
+(check-expect (set-cell EX-GRID-3 (make-posn -3 -4) (make-cell 0 CPLATE)) #f)
+(check-expect (set-cell EX-GRID-3 (make-posn 2 4) (make-cell 0 CPLATE)) #f)
+(check-expect (set-cell EX-GRID-4 (make-posn 3 2) (parse-cell '+AR))
+              (parse-grid '((.CC .IA .OD .IB .CC .CC .CC)
+                            (.CC .EE .CC .EE .EE .EE .CC)
+                            (.CC .EE .AR +AR .XZ .EE .CC)
+                            (.CC .EE .NU .EE .EE .EE .CC)
+                            (.CC .CC .AU .CC .CC .CC .CC))))
+(check-expect (set-cell EX-GRID-5 (make-posn 1 0) (parse-cell '-CC))
+              (parse-grid '((+IX -CC +XZ)
+                            (-AR +NR +CC)
+                            (-CC +NL +IY))))
+
+(: get-neighbors (Grid Posn -> (mixed [ListOf A-Cell] (enum #f))))
+; Returns a list of the orthogonal neighbors to a grid cell at a given posn. This can be up to 4
+;   but will be less for posns on the edges. If the posn is not on the grid, #f is returned
+(define (get-neighbors g p)
+  (if (point-in-grid? g p)
+      (filter (compose not boolean?)
+              (list (get-cell g (make-posn (add1 (posn-x p))       (posn-y p)))
+                    (get-cell g (make-posn       (posn-x p)  (add1 (posn-y p))))
+                    (get-cell g (make-posn (sub1 (posn-x p))       (posn-y p)))
+                    (get-cell g (make-posn       (posn-x p)  (sub1 (posn-y p))))))
+      #f))
+
+(check-expect (cell-set-equal? (get-neighbors (make-grid 1 1) (make-posn 0 0)) '()) #t)
+(check-expect (cell-set-equal? (get-neighbors EX-GRID-3 (make-posn 2 0))
+                               (map parse-cell '(.EE .IX .IY)))
+              #t)
+(check-expect (cell-set-equal? (get-neighbors EX-GRID-3 (make-posn 0 3))
+                               (map parse-cell '(.EE .XZ)))
+              #t)
+(check-expect (get-neighbors EX-GRID-3 (make-posn 5 2)) #f)
+
+(: power-from (Grid Posn (enum UP DOWN LEFT RIGHT) -> Number))
+; Given the grid, a position of a cell, and the direction we want to query,
+;   the power given from that direction is returned, depending on what the cell
+;   in that direction is
+(define (power-from grid pos dir)
+  (let ([c (get-cell grid
+                     (make-posn (+ (posn-x pos)
+                                   (match-else dir `((,RIGHT 1) (,LEFT -1)) 0))
+                                (+ (posn-y pos)
+                                   (match-else dir `((,DOWN 1) (,UP -1)) 0))))]
+        [oppDir (match dir `((,UP ,DOWN) (,DOWN ,UP) (,LEFT ,RIGHT) (,RIGHT ,LEFT)))])
+    (cond
+      [(boolean? c) 0]
+      [(gate? (cell-body c))
+       (if (symbol=? (gate-dir (cell-body c)) oppDir) (cell-charge c) 0)]
+      [(io-wire? (cell-body c))
+       (if (io-wire-is-input (cell-body c)) (cell-charge c) 0)]
+      [(symbol=? (cell-body c) CPLATE) (cell-charge c)]
+      [(symbol=? (cell-body c) EMPTY) 0])))
+
+(define EX-GRID-6
+  (parse-grid '((+AD .EE -NU)
+                (-OR .CC +IX))))
+
+(check-expect (power-from EX-GRID-6 (make-posn 0 0) RIGHT) 0)
+(check-expect (power-from EX-GRID-6 (make-posn 1 0) RIGHT) 0)
+(check-expect (power-from EX-GRID-6 (make-posn 2 0) DOWN) 1)
+(check-expect (power-from EX-GRID-6 (make-posn 0 1) UP) 1)
+(check-expect (power-from EX-GRID-6 (make-posn 1 1) LEFT) -1)
+(check-expect (power-from EX-GRID-6 (make-posn 1 0) DOWN) 0)
+(check-expect (power-from EX-GRID-6 (make-posn 2 1) RIGHT) 0)
+
+(: grid=? (Grid Grid -> Boolean))
+; Returns #t if two grids are exactly equal (same size, same cells, same cell charges and contents),
+;   otherwise #f
+(define (grid=? g1 g2)
+  (andmap (λ (row1 row2)
+            (andmap (λ (c1 c2)
+                      (and (= (cell-charge c1) (cell-charge c2))
+                           (let ([b1 (cell-body c1)] [b2 (cell-body c2)])
+                             (or (and (symbol? b1) (symbol? b2)
+                                      (symbol=? b1 b2))
+                                 (and (io-wire? b1) (io-wire? b2)
+                                      (string=? (io-wire-id b1) (io-wire-id b2))
+                                      (boolean=? (io-wire-is-input b1) (io-wire-is-input b2)))
+                                 (and (gate? b1) (gate? b2)
+                                      (symbol=? (gate-type b1) (gate-type b2))
+                                      (symbol=? (gate-dir b1) (gate-dir b2)))))))
+                    row1 row2))
+          g1 g2))
+
+(check-expect (grid=? EX-GRID-4 EX-GRID-4) #t)
+(check-expect (grid=? EX-GRID-3 EX-GRID-3) #t)
+(check-expect (grid=? (parse-grid '((+AD .EE -NU)
+                                    (-OR +CC +IX)))
+                      (parse-grid '((+AD .EE -NU)
+                                    (-OR .CC +IX))))
+              #f)
+(check-expect (grid=? (parse-grid '((+AD .EE -NU)
+                                    (-OR +CC +IX)))
+                      (parse-grid '((+AD .CC -NU)
+                                    (-OR .CC +IX))))
+              #f)
+(check-expect (grid=? (parse-grid '((+OD .EE -NU)
+                                    (-OR +CC +IX)))
+                      (parse-grid '((+OD .EE -NU)
+                                    (-OR .CC +IX))))
+              #f)
+(check-expect (grid=? (parse-grid '((+AU .EE -NU)
+                                    (-OR +CC +IX)))
+                      (parse-grid '((+AD .EE -NU)
+                                    (-OR .CC +IX))))
+              #f)
+(check-expect (grid=? (parse-grid '((+AD .EE -NU)
+                                    (-OR +CC +XX)))
+                      (parse-grid '((+AD .EE -NU)
+                                    (-OR .CC +IX))))
+              #f)
+(check-expect (grid=? (parse-grid '((+AD .EE -NU)
+                                    (-OR +CC +IX)))
+                      (parse-grid '((+AD .EE -NU)
+                                    (-OR .CC +IY))))
+              #f)
+
+;                          ╔═══════════════╗
+; ------------------------ ║ Grid Updating ║ ------------------------
+;                          ╚═══════════════╝
+
+(: update-gate-charge (Gate (enum -1 0 1) (enum -1 0 1) (enum -1 0 1) (enum -1 0 1) -> (enum -1 0 1)))
+; Given a gate and the power inputs from all four directions, computes the gate's updated charge by
+;   applying it's logical operation to the appropriate inputs
+(define (update-gate-charge g pUp pDown pLeft pRight)
+  (let ([p1 (if (or (symbol=? (gate-dir g) 'up) (symbol=? (gate-dir g) 'down)) pLeft pDown)]
+        [p2 (if (or (symbol=? (gate-dir g) 'up) (symbol=? (gate-dir g) 'down)) pRight pUp)])
+    (cond
+      [(symbol=? (gate-type g) NOT)
+       (* -1 (match (gate-dir g) `((,UP ,pDown) (,DOWN ,pUp) (,RIGHT ,pLeft) (,LEFT ,pRight))))]
+      [(or (zero? p1) (zero? p2)) 0]
+      [else (if ((match (gate-type g) `((,AND ,(λ (a b) (and a b))) (,OR ,(λ (a b) (or a b)))))
+                 (positive? p1) (positive? p2))
+                1 -1)])))
+
+(check-expect (update-gate-charge (make-gate AND DOWN) 0 -1 1 1) 1)
+(check-expect (update-gate-charge (make-gate AND LEFT) 1 1 0 0) 1)
+(check-expect (update-gate-charge (make-gate AND UP) 0 -1 -1 1) -1)
+(check-expect (update-gate-charge (make-gate AND RIGHT) 0 -1 1 1) 0)
+(check-expect (update-gate-charge (make-gate OR DOWN) 0 -1 1 1) 1)
+(check-expect (update-gate-charge (make-gate OR LEFT) 1 -1 0 0) 1)
+(check-expect (update-gate-charge (make-gate OR UP) 0 -1 -1 -1) -1)
+(check-expect (update-gate-charge (make-gate OR RIGHT) 0 -1 1 1) 0)
+(check-expect (update-gate-charge (make-gate NOT RIGHT) 0 -1 1 1) -1)
+(check-expect (update-gate-charge (make-gate NOT DOWN) 0 -1 1 1) 0)
+(check-expect (update-gate-charge (make-gate NOT LEFT) 0 -1 1 -1) 1)
+
+(: update (Grid Posn -> A-Cell))
+; Given a grid and a position in that grid, returns the cell after one update. This depends on
+;   the type of cell, where a gate has logic associated with it, a plate or output wire looks at
+;   all neighbors, an input wire just gives an input, and an empty cell does nothing.
+; Throws an error if there is a short-circuit or if the posn is not in the grid
+(define (update grid pos)
+  (let ([c (get-cell grid pos)]
+        [pUp (power-from grid pos UP)]
+        [pDown (power-from grid pos DOWN)]
+        [pLeft (power-from grid pos LEFT)]
+        [pRight (power-from grid pos RIGHT)])
+    (cond
+      [(false? c) (error "Invalid cell posn")]
+      [(gate? (cell-body c))
+       (make-cell (update-gate-charge (cell-body c) pUp pDown pLeft pRight) (cell-body c))]
+      [(and (io-wire? (cell-body c)) (io-wire-is-input (cell-body c)))
+       c]
+      [(or (io-wire? (cell-body c)) (symbol=? (cell-body c) CPLATE))
+       (let
+           ([pos (ormap positive? (list pUp pDown pLeft pRight))]
+            [neg (ormap negative? (list pUp pDown pLeft pRight))]
+            [cur (cell-charge c)])
+         (cond
+           [(and neg pos) (error "Conflicting charges")]
+           [pos (if (= cur -1) (error "Conflicting charges") (make-cell 1 (cell-body c)))]
+           [neg (if (= cur 1) (error "Conflicting charges") (make-cell -1 (cell-body c)))]
+           [else c]))]
+      [(symbol=? (cell-body c) EMPTY) c])))
+
+(define EX-GRID-7
+  (parse-grid '((+CC .OD +CC)
+                (+CC .AU -CC)
+                (-CC .OD +IY)
+                (-CC .AD -CC)
+                (+CC .OU .CC)
+                (.AR .AD -CC)
+                (+CC .NR .ND)
+                (.CC .NR -CC)
+                (.CC +IX .CC)
+                (.EE .XZ .EE))))
+
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 0))) 1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 1))) -1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 2))) 1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 3))) -1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 4))) 0)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 5))) 0)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 6))) -1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 7))) 0)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 2 6))) 1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 0 5))) 1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 0 7))) 1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 0 8))) 1)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 0 9))) 0)
+(check-expect (cell-charge (update EX-GRID-7 (make-posn 1 9))) 1)
+(check-error (update EX-GRID-7 (make-posn 2 8)))
+(check-error (update EX-GRID-7 (make-posn 3 3)))
+
+(: update-grid (Grid -> Grid))
+; Updates the cell at each position in the grid to allow charge to propagate by one timestep.
+(define (update-grid g)
+  (map (lambda (row)
+         (map (lambda (col) (update g (make-posn col row)))
+              (range 0 (length (list-ref g row)) 1)))
+       (range 0 (length g) 1)))
+
+(check-expect (update-grid
+               (parse-grid '((+IX .NR .CC)
+                             (.CC .AD .CC))))
+              (parse-grid '((+IX -NR .CC)
+                            (+CC .AD .CC))))
+
+(check-expect (update-grid
+               (update-grid
+                (parse-grid '((+IX .NR .CC)
+                              (.CC .AD .CC)))))
+              (parse-grid '((+IX -NR -CC)
+                            (+CC .AD .CC))))
+
+(check-expect (update-grid
+               (update-grid
+                (update-grid
+                 (parse-grid '((+IX .NR .CC)
+                               (.CC .AD .CC))))))
+              (parse-grid '((+IX -NR -CC)
+                            (+CC .AD -CC))))
+
+(check-expect (update-grid
+               (update-grid
+                (update-grid
+                 (update-grid
+                  (parse-grid '((+IX .NR .CC)
+                                (.CC .AD .CC)))))))
+              (parse-grid '((+IX -NR -CC)
+                            (+CC -AD -CC))))
+
+;                          ╔═════════════════╗
+; ------------------------ ║ New World State ║ ------------------------
+;                          ╚═════════════════╝
+
+(define PASS 'pass)
+(define FAIL 'fail)
+(define NONE 'none)
+(define RUNNING 'running)
+(define-struct goal [ins outs status])
+(define GoalStatus (signature (enum PASS FAIL NONE RUNNING)))
+(define GoalPair (signature (predicate (λ (g) (and (list? g) (= 2 (length g))
+                                                   (string? (first g))
+                                                   (number? (second g))
+                                                   (or (= 1 (second g)) (= -1 (second g))))))))
+; A goal pair is a string representing the name of an io wire, and 1 or -1 representing the charge
+;   that wire should have for the current goal
+(define A-Goal (signature [GoalOf [ListOf GoalPair] [ListOf GoalPair] GoalStatus]))
+; A goal contains a list of goal pairs representing the inputs for the test, and list of goal pairs
+;   representing the expected outputs of the tests, and PASS, FAIL, NONE, or RUNNING to represent
+;   the current status of that test
+
+(: EX-GOAL-1 A-Goal)
+(define EX-GOAL-1 (make-goal '(("X" 1) ("Y" 1)) '(("Z" -1) ("Q" 1)) PASS))
+(define EX-GOAL-2 (make-goal '(("X" 1) ("Y" -1)) '(("Z" 1)) FAIL))
+(define EX-GOAL-3 (make-goal '(("X" -1) ("Y" 1)) '(("M" -1) ("Z" 1)) RUNNING))
+(define EX-GOAL-4 (make-goal '(("X" -1) ("Y" -1)) '(("Z" -1)) NONE))
+
+(define EX-GOAL-5 (make-goal '(("A" 1) ("B" 1)) '(("Z" -1)) NONE))
+(define EX-GOAL-6 (make-goal '(("A" 1) ("B" -1)) '(("Z" -1)) NONE))
+(define EX-GOAL-7 (make-goal '(("A" -1) ("B" 1)) '(("Z" 1)) NONE))
+(define EX-GOAL-8 (make-goal '(("A" -1) ("B" -1)) '(("Z" -1)) NONE))
+
+
+(define (template-goalpair-list g)
+  (... (cond [(empty? g) ...]
+             [(cons? g) (... (first (first g)) ...
+                             (second (first g)) ...
+                             (template-goalpair-list (rest g)) ...)]) ...))
+(define (template-goal g)
+  (... (template-goalpair-list (goal-ins g)) ...
+       (template-goalpair-list (goal-outs g)) ...
+       (goal-status g) ...))
+
+(define LOST 'lost)
+(define WON 'won)
+(define START 'start)
+(define-struct world [base curr goals mode])
+(define WorldMode (signature (mixed Number (enum LOST WON START))))
+; World mode can be:
+; - A number, representing the index of the current goal being tested
+; - WON or LOST, representing a completed game where the player has won or lost
+; - START, representing a game where goal tests have not yet started
+(define A-World (signature [WorldOf Grid Grid [ListOf A-Goal] WorldMode]))
+; Represents everything big-bang needs in order to represent a current game, including the initial
+;   grid to be tested, the current state of the grid during testing, a list of goals to be tested,
+;   and a world mode
+(define EX-WORLD-1 (make-world EX-GRID-4 EX-GRID-4
+                               (list EX-GOAL-5 EX-GOAL-6 EX-GOAL-7 EX-GOAL-8)
+                               START))
+(define EX-WORLD-2 (make-world EX-GRID-3 EX-GRID-3 (list EX-GOAL-2 EX-GOAL-4) 1))
+
+(define (template-goal-list g)
+  (... (cond [(empty? g) ...]
+             [(cons? g) (... (template-goal (first g)) ...
+                             (template-goalpair-list (rest g)) ...)]) ...))
+(define (template-world w)
+  (... (cond [(number? (world-mode w))
+              (...(template-grid (world-base w)) ...
+                  (template-grid (world-curr w)) ...
+                  (template-goal-list (world-goal w)) ...)]
+             [(and (symbol? (world-mode w)) (symbol=? (world-mode w) FINISHED))
+              (...(template-grid (world-base w)) ...
+                  (template-grid (world-curr w)) ...
+                  (template-goal-list (world-goal w)) ...)]) ...))
+
+;                          ╔═════════════════╗
+; ------------------------ ║ World Rendering ║ ------------------------
+;                          ╚═════════════════╝
+
+(define ENTRY-SIZE 40)
+
+(: table-text (String -> Image))
+; Renders text in the particular font we have chosen to use for the table of goals
+(define (table-text str)
+  (text/font str (round (/ ENTRY-SIZE 2)) "black" #f 'modern 'normal 'normal #f))
+
+(check-expect (table-text "Hello")
+              (text/font "Hello" (round (/ ENTRY-SIZE 2)) "black" #f 'modern 'normal 'normal #f))
+(check-expect (table-text "XYZ+-#")
+              (text/font "XYZ+-#" (round (/ ENTRY-SIZE 2)) "black" #f 'modern 'normal 'normal #f))
+
+(: draw-table-cell (GoalPair -> Image))
+; Draws a single cell representing an io-wire in the goal table with yellow for positive charge
+;   and red for negative
+(define (draw-table-cell info)
+  (overlay
+   (table-text (first info))
+   (overlay
+    (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2)
+               "solid" (if (= (second info) 1) "yellow" "red"))
+    (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(check-expect (draw-table-cell '("X" 1))
+              (overlay (table-text "X")
+                       (overlay
+                        (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2) "solid" "yellow")
+                        (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+(check-expect (draw-table-cell '("Y" -1))
+              (overlay (table-text "Y")
+                       (overlay
+                        (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2) "solid" "red")
+                        (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+(check-expect (draw-table-cell '("Z" 1))
+              (overlay (table-text "Z")
+                       (overlay
+                        (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2) "solid" "yellow")
+                        (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(: draw-lis ([ListOf GoalPair] -> Image))
+; Turns a list of goalpairs into a sequence of images with the id of each io-wire represented by
+;   and the goal pairs and a color showing it's expected charge 
+(define (draw-lis lis)
+  (cond
+    [(empty? (rest lis)) (draw-table-cell (first lis))]
+    [(list? (rest lis)) (beside (draw-table-cell (first lis)) (draw-lis (rest lis)))]))
+
+(check-expect (draw-lis (goal-ins EX-GOAL-2))
+              (beside (draw-table-cell (first (goal-ins EX-GOAL-2)))
+                      (draw-table-cell (second (goal-ins EX-GOAL-2)))))
+(check-expect (draw-lis (goal-outs EX-GOAL-2))
+              (draw-table-cell (first (goal-outs EX-GOAL-2))))
+
+(define PASS-COLOR "lightgreen")
+(define FAIL-COLOR "lightred")
+(define RUNNING-COLOR "gray")
+(define NONE-COLOR "white")
+
+(: draw-row (A-Goal -> Image))
+; Draws a row of the goal table. The row represents a goal, showing the input wires with their
+;   charges on the left, and an arrow pointint to the output wires with their expected charges
+;   on the right. Also draws an indicator for the current status of the goal (passed, failed,
+;   running, or none)
+(define (draw-row g)
+  (beside
+   (draw-lis (goal-ins g))
+   (overlay (table-text ">") (empty-scene ENTRY-SIZE ENTRY-SIZE))
+   (draw-lis (goal-outs g))
+   (overlay
+    (text/font (match (goal-status g) `((,PASS "✓") (,FAIL "✗") (,RUNNING "⟳") (,NONE "?")))
+               (round (/ ENTRY-SIZE 1.5))
+               (match (goal-status g) `((,PASS "darkgreen")
+                                        (,FAIL "red")
+                                        (,RUNNING "black")
+                                        (,NONE "gray")))
+               #f 'modern 'normal 'normal #f)
+    (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2)
+               "solid"
+               (match (goal-status g)
+                 `((,PASS ,PASS-COLOR)
+                   (,FAIL ,FAIL-COLOR)
+                   (,RUNNING ,RUNNING-COLOR)
+                   (,NONE ,NONE-COLOR))))
+    (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(check-expect (draw-row EX-GOAL-2)
+              (beside (draw-lis (goal-ins EX-GOAL-2))
+                      (overlay (table-text ">")
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))
+                      (draw-lis (goal-outs EX-GOAL-2))
+                      (overlay (text/font "✗" (round (/ ENTRY-SIZE 1.5)) "red"
+                                          #f 'modern 'normal 'normal #f)
+                               (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2)
+                                          "solid"
+                                          FAIL-COLOR)
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(check-expect (draw-row EX-GOAL-1)
+              (beside (draw-lis (goal-ins EX-GOAL-1))
+                      (overlay (table-text ">")
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))
+                      (draw-lis (goal-outs EX-GOAL-1))
+                      (overlay (text/font "✓" (round (/ ENTRY-SIZE 1.5)) "darkgreen"
+                                          #f 'modern 'normal 'normal #f)
+                               (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2)
+                                          "solid"
+                                          PASS-COLOR)
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(check-expect (draw-row EX-GOAL-3)
+              (beside (draw-lis (goal-ins EX-GOAL-3))
+                      (overlay (table-text ">")
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))
+                      (draw-lis (goal-outs EX-GOAL-3))
+                      (overlay (text/font "⟳" (round (/ ENTRY-SIZE 1.5)) "black"
+                                          #f 'modern 'normal 'normal #f)
+                               (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2)
+                                          "solid"
+                                          RUNNING-COLOR)
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(check-expect (draw-row EX-GOAL-4)
+              (beside (draw-lis (goal-ins EX-GOAL-4))
+                      (overlay (table-text ">")
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))
+                      (draw-lis (goal-outs EX-GOAL-4))
+                      (overlay (text/font "?" (round (/ ENTRY-SIZE 1.5)) "gray"
+                                          #f 'modern 'normal 'normal #f)
+                               (rectangle (- ENTRY-SIZE 2) (- ENTRY-SIZE 2)
+                                          "solid"
+                                          NONE-COLOR)
+                               (empty-scene ENTRY-SIZE ENTRY-SIZE))))
+
+(: draw-table ([ListOf A-Goal] -> Image))
+; Draws a table representing a list of Goals. See "draw-row" for a description of how the rows look.
+(define (draw-table goals)
+  (foldr (lambda (elem acc) (above (draw-row elem) acc)) (rectangle 0 0 "solid" "white") goals))
+
+(check-expect (draw-table (world-goals EX-WORLD-2))
+              (above (draw-row EX-GOAL-2)
+                     (draw-row EX-GOAL-4)))
+
+(check-expect (draw-table (world-goals EX-WORLD-1))
+              (above (draw-row EX-GOAL-5)
+                     (draw-row EX-GOAL-6)
+                     (draw-row EX-GOAL-7)
+                     (draw-row EX-GOAL-8)))
+
+(define PADDING (rectangle 50 50 "solid" (color 0 0 0 0)))
+(: draw-world (A-World -> Image))
+; Draws a world by drawing its grid on the left and the table representing its goals on the right
+(define (draw-world w)
+  (beside (grid->image (world-curr w))
+          PADDING
+          (above (draw-table (world-goals w))
+                 PADDING
+                 (text/font (match-else (world-mode w) `((,WON "You won!")
+                                                         (,LOST "You lost"))
+                                        "Testing...")
+                            (round (* ENTRY-SIZE 1.2)) "black"
+                            "Comic Sans MS" 'modern 'normal 'normal #f))
+          PADDING))
+
+(check-expect (draw-world EX-WORLD-1)
+              (beside (grid->image EX-GRID-4)
+                      PADDING
+                      (above (draw-table (world-goals EX-WORLD-1))
+                             PADDING
+                             (text/font "Testing..."
+                                        (round (* ENTRY-SIZE 1.2)) "black"
+                                        "Comic Sans MS" 'modern 'normal 'normal #f))
+                      PADDING))
+
+(check-expect (draw-world EX-WORLD-2)
+              (beside (grid->image EX-GRID-3)
+                      PADDING
+                      (above (draw-table (world-goals EX-WORLD-2))
+                             PADDING
+                             (text/font "Testing..."
+                                        (round (* ENTRY-SIZE 1.2)) "black"
+                                        "Comic Sans MS" 'modern 'normal 'normal #f))
+                      PADDING))
+
+(check-expect (draw-world (make-world EX-GRID-1 EX-GRID-1 (list EX-GOAL-5) WON))
+              (beside (grid->image EX-GRID-1)
+                      PADDING
+                      (above (draw-table (list EX-GOAL-5))
+                             PADDING
+                             (text/font "You won!"
+                                        (round (* ENTRY-SIZE 1.2)) "black"
+                                        "Comic Sans MS" 'modern 'normal 'normal #f))
+                      PADDING))
+
+
+;                          ╔════════════════╗
+; ------------------------ ║ World Updating ║ ------------------------
+;                          ╚════════════════╝
+
+(: make-test-grid (Grid A-Goal -> Grid))
+; Takes a base grid and a goal and sets the charges of all input wires of the grid in accordance
+;   with the inputs specified by the goal. If there are inputs listed in the goal but not present
+;   in the grid, or vice versa, an error is thrown. The charge of all other cells is set to 0.
+(define (make-test-grid base g)
+  (let* ([acc-row
+          ; acc-row (Cell [List [ListOf Cell] [ListOf GoalPair]]
+          ;          -> [List [ListOf Cell] [ListOf GoalPair]])
+          ; When passed to foldr of a row, rebuilds the row while updating the charge of input
+          ;   io-wires according to a set of goal pairs. When a goal pair is used it is removed
+          ;   from the set of goal pairs. Errors if an input has an ID not present in the goal.
+          ;   Sets the charge of all other cells to 0
+          (λ (c acc2); acc2 is (list row-being-built goalpairs-remaining)
+            (if (and (io-wire? (cell-body c)) (io-wire-is-input (cell-body c)))
+                (let ([chg (match-else (io-wire-id (cell-body c)) (second acc2) #f)])
+                  (if (false? chg)
+                      (error "IO-Wire in grid but not in goal")
+                      (list (cons (make-cell chg (cell-body c)) (first acc2))
+                            (remove (list (io-wire-id (cell-body c)) chg) (second acc2)))))
+                (list (cons (make-cell 0 (cell-body c)) (first acc2)) (second acc2))))]
+         [acc-rows
+          ; acc-rows ([ListOf Cell] [List [ListOf [ListOf Cell]] [ListOf GoalPair]]
+          ;           -> [List [ListOf [ListOf Cell]] [ListOf GoalPair]])
+          ; When passed to foldr of a grid, rebuilds the grid while updating the charge of
+          ;   input io-wires in each row and keeping track of the shrinking list of goal pairs
+          (λ (row acc1); acc1 is (list grid-being-built goalpairs-remaining)
+            (let ([newrowandgoal (foldr acc-row (list '() (second acc1)) row)])
+              (list (cons (first newrowandgoal) (first acc1)) (second newrowandgoal))))]
+         [newgridandgoal
+          (foldr acc-rows (list '() (goal-ins g)) base)])
+    (if (empty? (second newgridandgoal))
+        (first newgridandgoal)
+        (error "IO-Wire in goal but not in grid"))))
+
+(check-expect (make-test-grid EX-GRID-4 EX-GOAL-7)
+              (parse-grid '((.CC -IA .OD +IB .CC .CC .CC)
+                            (.CC .EE .CC .EE .EE .EE .CC)
+                            (.CC .EE .AR .CC .XZ .EE .CC)
+                            (.CC .EE .NU .EE .EE .EE .CC)
+                            (.CC .CC .AU .CC .CC .CC .CC))))
+(check-expect (make-test-grid EX-GRID-5 EX-GOAL-2)
+              (parse-grid '((+IX .EE .XZ)
+                            (.AR .NR .CC)
+                            (.CC .NL -IY))))
+(check-error (make-test-grid EX-GRID-5 EX-GOAL-5))
+(check-error (make-test-grid (parse-grid '((.IX .IY .IQ))) EX-GOAL-5))
+(check-error (make-test-grid (parse-grid '((.iA))) EX-GOAL-5))
+
+(: update-test-status (Grid Grid A-Goal -> GoalStatus))
+; Given two grids--one from before an update and one from after an update--and a goal, determines
+;   the new goal status, i.e. whether the test has passed, failed, or is still running. If there
+;   are outputs listed in the goal but not present in the grid, or vice versa, an error is thrown.
+;   (This behavior can be short-circuited, i.e. it can return FAIL instead of an error, but it will
+;   never return PASS when it should return an error)
+(define (update-test-status oldgrid newgrid g)
+  (let ([acc-check-goal
+         ; acc-check-goal (A-Cell (mixed (enum #f) [ListOf GoalPair])
+         ;                 -> (mixed (enum #f) [ListOf GoalPair]))
+         ; When passed to foldr of a list of cells, checks that the charge of each output io-wire
+         ;   matches what it should be according to the goal. When a goal pair is used it is removed
+         ;   from the set of goal pairs. Errors if an output wire has an ID not present in the goal.
+         (λ (c acc)
+           (cond [(false? acc) #f]
+                 [(and (io-wire? (cell-body c)) (not (io-wire-is-input (cell-body c))))
+                  (let ([chg (match-else (io-wire-id (cell-body c)) acc #f)])
+                    (cond [(false? chg) (error "IO-Wire in grid but not in goal")]
+                          [(= (cell-charge c) chg)
+                           (remove (list (io-wire-id (cell-body c)) chg) acc)]
+                          [else #f]))]
+                 [else acc]))])
+    (cond [(grid=? oldgrid newgrid)
+           (let ([check (foldr acc-check-goal (goal-outs g) (apply append newgrid))])
+             (cond [(false? check) FAIL]
+                   [(not (empty? check)) (error "IO-Wire in goal but not in grid")]
+                   [else PASS]))]
+          [else RUNNING])))
+
+(define EX-GRID-BASE (parse-grid '((.IX .NR .CC)
+                                   (.OR .CC .ND)
+                                   (.IY .EE .XZ))))
+(define EX-GRID-2-TO-COMP (parse-grid '((+IX -NR -CC)
+                                        (+OR +CC .ND)
+                                        (-IY .EE .XZ))))
+(define EX-GRID-1-TO-COMP (parse-grid '((+IX -NR -CC)
+                                        (+OR +CC +ND)
+                                        (-IY .EE .XZ))))
+(define EX-GRID-COMP (parse-grid '((+IX -NR -CC)
+                                   (+OR +CC +ND)
+                                   (-IY .EE +XZ))))
+(define EX-GOAL-PASS (make-goal '(("X" 1) ("Y" -1)) '(("Z" 1)) RUNNING))
+(define EX-GOAL-FAIL (make-goal '(("X" 1) ("Y" -1)) '(("Z" -1)) RUNNING))
+(define EX-GOAL-ERR-1 (make-goal '(("X" 1) ("Y" -1)) '(("M" 1) ("Z" 1)) RUNNING))
+(define EX-GOAL-ERR-2 (make-goal '(("X" 1) ("Y" -1)) '() RUNNING))
+(check-expect (update-test-status EX-GRID-2-TO-COMP EX-GRID-1-TO-COMP EX-GOAL-PASS) RUNNING)
+(check-expect (update-test-status EX-GRID-1-TO-COMP EX-GRID-COMP EX-GOAL-FAIL) RUNNING)
+(check-expect (update-test-status EX-GRID-COMP EX-GRID-COMP EX-GOAL-PASS) PASS)
+(check-expect (update-test-status EX-GRID-COMP EX-GRID-COMP EX-GOAL-FAIL) FAIL)
+(check-error (update-test-status EX-GRID-COMP EX-GRID-COMP EX-GOAL-ERR-1))
+(check-error (update-test-status EX-GRID-COMP EX-GRID-COMP EX-GOAL-ERR-2))
+
+(: update-world (A-World -> A-World))
+; Updates a world by one tick, which could involve running the next tick of a test,
+;   starting a new test, or doing nothing if all tests are finished
+(define (update-world w)
+  (cond [(number? (world-mode w))
+         (let* ([oldgrid (world-curr w)]
+                [newgrid (update-grid oldgrid)]
+                [g (list-ref (world-goals w) (world-mode w))]
+                [status (update-test-status oldgrid newgrid g)]
+                [newgoals (list-set (world-goals w) (world-mode w)
+                                    (make-goal (goal-ins g) (goal-outs g) status))])
+           (cond [(symbol=? status RUNNING)
+                  (make-world (world-base w) newgrid (world-goals w) (world-mode w))]
+                 [(< (add1 (world-mode w)) (length (world-goals w)))
+                  (let ([ng (list-ref (world-goals w) (add1 (world-mode w)))])
+                    (make-world (world-base w)
+                                (make-test-grid (world-base w) ng)
+                                (list-set newgoals (add1 (world-mode w))
+                                          (make-goal (goal-ins ng) (goal-outs ng) RUNNING))
+                                (add1 (world-mode w))))]
+                 [else
+                  (make-world (world-base w)
+                              newgrid
+                              newgoals
+                              (if (andmap (λ (g) (symbol=? (goal-status g) PASS)) newgoals)
+                                  WON
+                                  LOST))]))]
+        [(symbol? (world-mode w))
+         (cond [(member? (world-mode w) `(,WON ,LOST)) w]
+               [(symbol=? (world-mode w) START)
+                (make-world (world-base w)
+                            (make-test-grid (world-base w) (first (world-goals w)))
+                            (list-set (world-goals w) 0
+                                      (make-goal (goal-ins (first (world-goals w)))
+                                                 (goal-outs (first (world-goals w)))
+                                                 RUNNING))
+                            0)])]))
+
+(check-expect (update-world EX-WORLD-1)
+              (make-world EX-GRID-4
+                          (make-test-grid EX-GRID-4 EX-GOAL-5)
+                          (list-set (world-goals EX-WORLD-1) 0
+                                    (make-goal (goal-ins EX-GOAL-5)
+                                               (goal-outs EX-GOAL-5)
+                                               RUNNING))
+                          0))
+(check-expect (update-world (make-world EX-GRID-3 EX-GRID-3 (list EX-GOAL-2) WON))
+              (make-world EX-GRID-3 EX-GRID-3 (list EX-GOAL-2) WON))
+(check-expect (update-world (make-world EX-GRID-BASE EX-GRID-1-TO-COMP
+                                        (list EX-GOAL-PASS EX-GOAL-FAIL)
+                                        0))
+              (make-world EX-GRID-BASE EX-GRID-COMP
+                          (list EX-GOAL-PASS EX-GOAL-FAIL)
+                          0))
+(check-expect (update-world (make-world EX-GRID-BASE EX-GRID-COMP
+                                        (list EX-GOAL-PASS EX-GOAL-FAIL)
+                                        0))
+              (make-world EX-GRID-BASE (make-test-grid EX-GRID-BASE EX-GOAL-FAIL)
+                          (list (make-goal '(("X" 1) ("Y" -1)) '(("Z" 1)) PASS)
+                                EX-GOAL-FAIL)
+                          1))
+(check-expect (update-world (make-world EX-GRID-BASE EX-GRID-COMP
+                                        (list (make-goal '(("X" 1) ("Y" -1)) '(("Z" 1)) PASS)
+                                              EX-GOAL-FAIL)
+                                        1))
+              (make-world EX-GRID-BASE EX-GRID-COMP
+                          (list (make-goal '(("X" 1) ("Y" -1)) '(("Z" 1)) PASS)
+                                (make-goal '(("X" 1) ("Y" -1)) '(("Z" -1)) FAIL))
+                          LOST))
+
+;                          ╔═════════════╗
+; ------------------------ ║ Parse World ║ ------------------------
+;                          ╚═════════════╝
+
+(: parse-goal (SExp -> Goal))
+; Parses a sexp into a goal. The sexp should be a list of symbols representing io-wires, which
+;   are 2-character symbols where the first char is + or - representing the charge, and the second
+;   character is the name of the io-wire. The sexp should also contain the symbol '-> representing
+;   that io-wires to the left of that are inputs and to the right are outputs. An error is thrown
+;   if any invalid symbols are present, if '-> is not present, or if there not at least one input
+;   and one output.
+(define (parse-goal s)
+  (let ([acc-wires
+         ; acc-wires (SExp [ListOf (mixed GoalPair (enum '->))])
+         ;            -> [ListOf (mixed GoalPair (enum '->))])
+         ; When passed to foldr or foldl of a list of symbols, converts symbols representing wires,
+         ;   like +A or -Z, into goal pairs like '(A 1) '(Z -1) up until it encouters '->, then it
+         ;   stops accumulating
+         (λ (elem acc)
+           (cond [(and (cons? acc) (symbol? (first acc)) (symbol=? (first acc) '->)) acc]
+                 [(not (symbol? elem)) (error "Goal sexp must be a list of symbols")]
+                 [(symbol=? elem '->) (cons elem acc)]
+                 [else 
+                  (let ([parts (map string->symbol (explode (symbol->string elem)))])
+                    (if (and (= 2 (length parts)) (member (first parts) '(+ -)))
+                        (cons (list (symbol->string (second parts))
+                                    (match (first parts) '((+ 1) (- -1)))) acc)
+                        (error "Goal symbol must be +/- followed by a single char")))]))])
+    (if (and (list? s) (member '-> s))
+        (let ([left (foldl acc-wires '() s)]
+              [right (foldr acc-wires '() s)])
+          (if (and (>= (length left) 2) (>= (length right) 2))
+              (make-goal (reverse (rest left)) (rest right) NONE)
+              (error "Goal sexp must have at least one input and output, separated by '->")))
+        (error "Goal sexp must be a list containing '->"))))
+
+(check-expect (parse-goal '(-A -B +C -> +Q -M))
+              (make-goal '(("A" -1) ("B" -1) ("C" 1)) '(("Q" 1) ("M" -1)) NONE))
+(check-expect (parse-goal '(-N -> +X))
+              (make-goal '(("N" -1)) '(("X" 1)) NONE))
+(check-error (parse-goal '(+A -B)))
+(check-error (parse-goal '(+A -B ->)))
+(check-error (parse-goal '(-> +A -B)))
+(check-error (parse-goal '(+A -B -> *C)))
+(check-error (parse-goal '(+A B -> +C)))
+(check-error (parse-goal '(+A -BQ -> +C)))
+(check-error (parse-goal "banana"))
+(check-error (parse-goal '("list" "of" "banana")))
+
+(: parse-goals (SExp -> [ListOf Goal]))
+; Parses a list of goal sexps into a list of goals. Each goal is parsed according to the rules of
+;   "parse-goal", and then it is checked that all goals have the same inputs and outputs, in
+;   the same order. If they do not match, or if any of the input is malformed, an error is thrown.
+(define (parse-goals s)
+  (if (list? s)
+      (let* ([goals (map parse-goal s)]
+             [ins (map first (goal-ins (first goals)))]
+             [outs (map first (goal-outs (first goals)))])
+        (if (andmap (λ (g) (and (= (length ins) (length (goal-ins g)))
+                                (= (length outs) (length (goal-outs g)))
+                                (andmap string=? ins (map first (goal-ins g)))
+                                (andmap string=? outs (map first (goal-outs g)))))
+                    goals)
+            goals
+            (error "All goals in goals sexp must have the same ins and outs")))
+      (error "Goals sexp must be a list")))
+
+(check-expect (parse-goals '((+A +B -> -Z) (+A -B -> -Z) (-A +B -> +Z) (-A -B -> -Z)))
+              (list EX-GOAL-5 EX-GOAL-6 EX-GOAL-7 EX-GOAL-8))
+(check-expect (parse-goals '((-A -B +C -> +Q -M)))
+              (list (make-goal '(("A" -1) ("B" -1) ("C" 1)) '(("Q" 1) ("M" -1)) NONE)))
+(check-error (parse-goals '((+B +A -> -Z) (-B +A -> -Z) (+B -> +Z) (-B -A -> -Z))))
+(check-error (parse-goals '((+B +A -> -Z) (-B +A -> -Z) (+B -> +M +Z) (-B -A -> -Z))))
+(check-error (parse-goals '((+B +A -> -Z) (-B +A -> -Z) (+B -A ->) (-B -A -> -Z))))
+(check-error (parse-goals '((+B +A -> -Z) (-B *A -> -Z) (+B -A -> +Z) (-B -A -> -Z))))
+(check-error (parse-goals '((+B +A -> -Z) (-B -R -> -Z) (+B -A -> +Z) (-B -A -> -Z))))
+(check-error (parse-goals '((+B +A -> -Z) (-A -B -> -Z) (+B -A -> +Z) (-B -A -> -Z))))
+        
+(: parse-world (SExp SExp -> A-World))
+; Parses a sexp representing a list of goals and a sexp representing a starting grid
+;   into a world, ready to be passed into big bang
+(define (parse-world goals grid)
+  (let ([g (parse-grid grid)])
+    (make-world g g (parse-goals goals) START)))
+
+(check-expect (parse-world '((+A +B -> -Z)
+                             (+A -B -> -Z)
+                             (-A +B -> +Z)
+                             (-A -B -> -Z))
+                           '((.CC .IA .OD .IB .CC .CC .CC)
+                             (.CC .EE .CC .EE .EE .EE .CC)
+                             (.CC .EE .AR .CC .XZ .EE .CC)
+                             (.CC .EE .NU .EE .EE .EE .CC)
+                             (.CC .CC .AU .CC .CC .CC .CC)))
+              EX-WORLD-1)
+(check-expect (parse-world '((+X -Y -> +Z)
+                             (-X -Y -> -Z))
+                           '((+IX .EE +XZ)
+                             (-AR +NR +CC)
+                             (-CC +NL +IY)))
+              (make-world EX-GRID-5 EX-GRID-5
+                          (list (make-goal '(("X" 1) ("Y" -1)) '(("Z" 1)) NONE) EX-GOAL-4)
+                          START))
+(check-error (parse-world '((+B -A -> *Z)) '((.CC .EE) (.ND .IA))))
+(check-error (parse-world '((+B -A -> -Z)) '((.CC) (.ND .IA))))
+
+;                          ╔══════╗
+; ------------------------ ║ Main ║ ------------------------
+;                          ╚══════╝
+
+(: main (A-World -> A-World))
+; Calls big-bang with an initial grid, creating an animation of charge propagating through that grid
+(define (main w)
+  (big-bang w
+    [on-draw draw-world]
+    [on-tick update-world 1/4]))
+
+(main (parse-world '((+A +B -> -Z)
+                     (-A +B -> -Z)
+                     (+A -B -> +Z)
+                     (-A -B -> -Z))
+                   '((... .IA ... .IB ... ... ...)
+                     (... .CC ... .ND ... ... ...)
+                     (... .CC ... .AR .XZ ... ...)
+                     (... +CC .CC .CC ... ... ...)
+                     (... ... ... ... ... ... ...))))
+
+#; (main (parse-world '((+B +A -> -Z)
+                     (-B +A -> -Z)
+                     (+B -A -> +Z)
+                     (-B -A -> -Z))
+                   '((... .IA ... .IB ... ... ...)
+                     (... ... ... ... ... ... ...)
+                     (... ... ... ... .XZ ... ...)
+                     (... ... ... ... ... ... ...)
+                     (... ... ... ... ... ... ...))))
+
+
+
