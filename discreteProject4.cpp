@@ -146,7 +146,6 @@ void prnt(){
     }
     cout << ln;
 }
-
 int main()
 {
     srand(time(NULL));
