@@ -28,159 +28,229 @@ ll randRun(){
     return c;
 }
 
-
-
-struct Number{
+struct BST{
     int key;
     string val;
-    Number* nxt;
-    Number* down;
-    Number(int k){
+    BST* left;
+    BST* right;
+    BST* par = nullptr;
+    BST(int k, BST* p){
+        key = k;
+        val = "";
+        left = nullptr;
+        right = nullptr;
+        par = p;
+    }
+    BST(int k, string v){
+        key = k;
+        val = v;
+        left = nullptr;
+        right = nullptr;
+    }
+
+    void insert(int k){
+        if(this->key==-1){
+            this->key = k;
+            this->val = "";
+            return;
+        }
+        BST* last = this;
+        BST* iter = this;
+        while(iter!=nullptr){
+            if(k<iter->key) iter = iter->left;
+            else if(k>iter->key) iter = iter->right;
+            else break;
+        }
+        if(last->key==k) return;
+        (last->key>k) ? last->left : last->right = new BST(k, last);
+    }
+
+    BST* find(int k){
+        BST* iter = this;
+        while(iter!=nullptr){
+            if(k<iter->key) iter = iter->left;
+            else if(k>iter->key) iter = iter->right;
+            else break;
+        }
+        if(iter->key==k) return iter;
+        return nullptr;
+    }
+
+    void del(int k){
+
+    }
+};
+
+struct SkipList{
+    int key;
+    string val;
+    int depth = 1;
+    SkipList* nxt;
+    SkipList* down;
+    SkipList(int k){
         key = k;
         val = "";
         nxt = nullptr;
         down = nullptr;
     }
-    Number(int k, Number* n){
+    SkipList(int k, SkipList* n){
         key = k;
         val = "";
         nxt = n;
         down = nullptr;
     }
-    Number(int k, string v, Number* n){
+    SkipList(int k, string v, SkipList* n){
         key = k;
         val = v;
         nxt = n;
         down = nullptr;
     }
-};
 
-Number* skipList;
-ll depth;
-
-void insert(int num){
-    ll run = randRun();
-    for(int i = 0; i <= run-depth; i++){
-        Number* temp = new Number(0);
-        temp->down = skipList;
-        skipList = temp;
-    }
-    depth = max((ll)depth, run+1);
-
-    ll currDepth = 0;
-    Number* finder = skipList;
-    Number* above = new Number(num);
-    while (finder!=nullptr) {
-        while(finder->nxt!=nullptr and finder->nxt->key<=num){
-            finder = finder->nxt;
-            // cout << "going right" << ln;
+    SkipList* insert(int num){
+        ll run = randRun();
+        SkipList* out = this;
+        for(int i = 0; i <= run-(this->depth); i++){
+            SkipList* temp = new SkipList(0);
+            temp->down = out;
+            temp->nxt = nullptr;
+            temp->depth = out->depth+1;
+            out = temp;
         }
-        if(currDepth >= depth-run-1){
-            // cout << "inserting!" << ln;
-            if(finder->key==num){
-                above->down = finder;
-                break;
+        ll currDepth = 0;
+        SkipList* finder = out;
+        SkipList* above = new SkipList(num);
+        while (finder!=nullptr) {
+            while(finder->nxt!=nullptr and finder->nxt->key<=num){
+                finder = finder->nxt;
+                // cout << "going right" << ln;
             }
-            finder->nxt = new Number(num, finder->nxt);
-            above->down = finder->nxt;
-            above = above->down;
-        }
-        else{
-            // cout << "not yet" << ln;
-        }
-        if(finder->down == nullptr) break;
-        finder = finder->down;
-        currDepth++;
-    }
-}
-
-int find(int num){
-    Number* finder = skipList;
-    while (finder!=nullptr) {
-        while(finder->nxt!=nullptr and finder->nxt->key<=num){
-            finder = finder->nxt;
-            cout << "right" << ln;
-        }
-        if(finder->key==num) return finder->key;
-        if(finder->down == nullptr) break;
-        finder = finder->down;
-        cout << "down" << ln;
-    }
-    return -1;
-}
-
-void del(int num){
-    Number* finder = skipList;
-    while (finder!=nullptr) {
-        while(finder->nxt!=nullptr and finder->nxt->key<num){
-            finder = finder->nxt;
-        }
-        if(finder->nxt!=nullptr and finder->nxt->key==num) 
-           finder->nxt = finder->nxt->nxt;
-        if(finder->down == nullptr) break;
-        finder = finder->down;
-    }
-}
-
-void prnt(){
-    Number* curr = skipList;
-    int mx = 0;
-    while(curr!=nullptr){
-        Number* temp = curr;
-        int last = 0;
-        cout << ".";
-        while(temp->nxt!=nullptr){
-            temp = temp->nxt;
-            for(int i = last+1; i <= temp->key-1; i++){
-                cout << " ";
+            if(currDepth >= (out->depth)-run-1){
+                // cout << "inserting!" << ln;
+                if(finder->key==num){
+                    above->down = finder;
+                    break;
+                }
+                finder->nxt = new SkipList(num, finder->nxt);
+                finder->nxt->depth = finder->depth;
+                above->down = finder->nxt;
+                above = above->down;
             }
-            last = temp->key;
-            cout << temp->key/10;
-            mx = max(mx, temp->key);
+            else{
+                // cout << "not yet" << ln;
+            }
+            if(finder->down == nullptr) break;
+            finder = finder->down;
+            currDepth++;
+        }
+        return out;
+    }
+
+    int find(int num){
+        SkipList* finder = this;
+        while (finder!=nullptr) {
+            while(finder->nxt!=nullptr and finder->nxt->key<=num){
+                finder = finder->nxt;
+                cout << "right" << ln;
+            }
+            if(finder->key==num) return finder->key;
+            if(finder->down == nullptr) break;
+            finder = finder->down;
+            cout << "down" << ln;
+        }
+        return -1;
+    }
+
+    void del(int num){
+        SkipList* finder = this;
+        while (finder!=nullptr) {
+            while(finder->nxt!=nullptr and finder->nxt->key<num){
+                finder = finder->nxt;
+            }
+            if(finder->nxt!=nullptr and finder->nxt->key==num) 
+            finder->nxt = finder->nxt->nxt;
+            if(finder->down == nullptr) break;
+            finder = finder->down;
+        }
+    }
+
+    void prnt(){
+        SkipList* curr = this;
+        int mx = 0;
+        while(curr!=nullptr){
+            SkipList* temp = curr;
+            int last = 0;
+            cout << ".";
+            while(temp->nxt!=nullptr){
+                temp = temp->nxt;
+                for(int i = last+1; i <= temp->key-1; i++){
+                    cout << " ";
+                }
+                last = temp->key;
+                cout << temp->key/10;
+                mx = max(mx, temp->key);
+            }
+            cout << ln;
+            curr = curr->down;
+        }
+        for(int i = 0; i < mx; i++){
+            cout << '-';
         }
         cout << ln;
-        curr = curr->down;
     }
-    for(int i = 0; i < mx; i++){
-        cout << '-';
-    }
-    cout << ln;
-}
-int main()
-{
+};
+
+void skipListTester(){
     srand(time(NULL));
-    // #ifndef ONLINE_JUDGE
-    //     freopen("data/input.txt","r", stdin);
-    //     freopen("data/output.txt","w", stdout);
-    // #endif
-    skipList = new Number(0);
-    depth = 1;
+
+    SkipList* sl = new SkipList(0);
     string type; cin >> type;
     while(type!="quit"){
         if(type=="insert"){
             int num; cin >> num;
-            insert(num);
+            sl = sl->insert(num);
         }
         if(type=="find"){
             int num; cin >> num;
-            cout << find(num) << ln;
+            cout << sl->find(num) << ln;
         }
         if(type=="delete"){
             int num; cin >> num;
-            del(num);
+            sl->del(num);
         }
         if(type=="print"){
-            prnt();
+            sl->prnt();
         }
         cin >> type;
     }
-    // insert(2, 2);
-    // prnt();
-    // insert(2,3);
-    // prnt();
-    // cout << depth << ln;
-    // insert(3, 1);
-    // prnt();
-    // cout << depth << ln;
+}
+
+void bstTester(){
+    BST* b = new BST(-1, nullptr);
+    string type; cin >> type;
+    while(type!="quit"){
+        if(type=="insert"){
+            int n; cin >> n;
+            b->insert(n);
+        }
+        if(type=="find"){
+            int n; cin >> n;
+            cout << b->find(n)->key << ln;
+        }
+        if(type=="delete"){
+            int n; cin >> n;
+            b->del(n);
+        }
+    }
+}
+
+int main()
+{
+    cout << "skiplist or bst?" << ln;
+    string s; cin >> s; 
+    while(s!="skiplist" and s!="bst"){
+        cin >> s;
+    }
+    if(s=="skiplist") skipListTester();
+    else bstTester();
     return 0;
 }
