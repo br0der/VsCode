@@ -73,11 +73,20 @@ void insert(int num){
     while (finder!=nullptr) {
         while(finder->nxt!=nullptr and finder->nxt->key<=num){
             finder = finder->nxt;
+            // cout << "going right" << ln;
         }
-        if(currDepth >= depth-run-1 and finder->key!=num){
+        if(currDepth >= depth-run-1){
+            // cout << "inserting!" << ln;
+            if(finder->key==num){
+                above->down = finder;
+                break;
+            }
             finder->nxt = new Number(num, finder->nxt);
             above->down = finder->nxt;
             above = above->down;
+        }
+        else{
+            // cout << "not yet" << ln;
         }
         if(finder->down == nullptr) break;
         finder = finder->down;
@@ -90,10 +99,12 @@ int find(int num){
     while (finder!=nullptr) {
         while(finder->nxt!=nullptr and finder->nxt->key<=num){
             finder = finder->nxt;
+            cout << "right" << ln;
         }
         if(finder->key==num) return finder->key;
         if(finder->down == nullptr) break;
         finder = finder->down;
+        cout << "down" << ln;
     }
     return -1;
 }
@@ -139,15 +150,14 @@ void prnt(){
 int main()
 {
     srand(time(NULL));
-    #ifndef ONLINE_JUDGE
-        freopen("data/input.txt","r", stdin);
-        freopen("data/output.txt","w", stdout);
-    #endif
+    // #ifndef ONLINE_JUDGE
+    //     freopen("data/input.txt","r", stdin);
+    //     freopen("data/output.txt","w", stdout);
+    // #endif
     skipList = new Number(0);
     depth = 1;
-    int n; cin >> n;
-    for(int i = 0; i < n; i++){
-        string type; cin >> type;
+    string type; cin >> type;
+    while(type!="quit"){
         if(type=="insert"){
             int num; cin >> num;
             insert(num);
@@ -163,10 +173,15 @@ int main()
         if(type=="print"){
             prnt();
         }
-        
+        cin >> type;
     }
-    // insert(1);
-    // insert(2);
+    // insert(2, 2);
+    // prnt();
+    // insert(2,3);
+    // prnt();
+    // cout << depth << ln;
+    // insert(3, 1);
+    // prnt();
     // cout << depth << ln;
     return 0;
 }

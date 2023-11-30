@@ -1,27 +1,14 @@
-26
+13
 insert 20
-print
 insert 40
-print
 insert 10
-print
 insert 20
-print
 insert 5
-print
 insert 80
-print
 insert 100
-print
 insert 20
-print
 insert 30
-print
 insert 50
-print
 delete 20
-print
 delete 40
-print
 insert 20
-print

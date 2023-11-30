@@ -37,6 +37,16 @@ ll MOD = 0;
 #define all(x) (x).begin(), (x).end()
 #define sz(x) ((ll)(x).size())
  
+int costMat[NODE][NODE] = {
+   {0, 3, 6, INF, INF, INF, INF},
+   {3, 0, 2, 1, INF, INF, INF},
+   {6, 2, 0, 1, 4, 2, INF},
+   {INF, 1, 1, 0, 2, INF, 4},
+   {INF, INF, 4, 2, 0, 2, 1},
+   {INF, INF, 2, INF, 2, 0, 1},
+   {INF, INF, INF, 4, 1, 1, 0}
+};
+
 vvint kthparent;
 vint depth;
 vint keyToPre, preToPost;
