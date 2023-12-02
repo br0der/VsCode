@@ -31,14 +31,22 @@ ll randRun(){
 struct BST{
     int key;
     string val;
+    int depth = 0;
     BST* left;
     BST* right;
     BST* par = nullptr;
+    BST(){
+        key = -1;
+        val = "";
+        depth = 0;
+        left = nullptr;
+        right = nullptr;
+    }
     BST(int k, BST* p){
         key = k;
         val = "";
-        left = nullptr;
-        right = nullptr;
+        left = new BST();
+        right = new BST();
         par = p;
     }
     BST(int k, string v){
@@ -49,34 +57,44 @@ struct BST{
     }
 
     void insert(int k){
-        if(this->key==-1){
-            this->key = k;
-            this->val = "";
-            return;
+        if(key==-1){
+            key = k;
+            val = "";
+            left = new BST();
+            right = new BST();
+            depth = 1;
         }
-        BST* last = this;
-        BST* iter = this;
-        while(iter!=nullptr){
-            if(k<iter->key) iter = iter->left;
-            else if(k>iter->key) iter = iter->right;
-            else break;
-        }
-        if(last->key==k) return;
-        (last->key>k) ? last->left : last->right = new BST(k, last);
+        if(key==k) return;
+        BST* nxt = key>k ? left : right;
+        cout << (key>k ? "left" : "right") << ln;
+        nxt->insert(k);
+        depth = max(left->depth, right->depth)+1;
     }
 
     BST* find(int k){
-        BST* iter = this;
-        while(iter!=nullptr){
-            if(k<iter->key) iter = iter->left;
-            else if(k>iter->key) iter = iter->right;
-            else break;
-        }
-        if(iter->key==k) return iter;
-        return nullptr;
+        if(key==-1 or key==k) return this;
+        BST* nxt = key>k ? left : right;
+        cout << (key>k ? "left" : "right") << ln;
+        return nxt->find(k);
     }
 
     void del(int k){
+        BST* f = find(k);
+        if(f->left->key==-1 and f->right->key==-1){
+            if(f->par==nullptr){
+                key = -1;
+                val = "";
+                depth = 0;
+            }
+            else{
+                if(f->key<f->par->key){
+                    f->par->left = f;
+                }
+            }
+        }
+    }
+
+    void print(){
 
     }
 };
@@ -225,7 +243,7 @@ void skipListTester(){
 }
 
 void bstTester(){
-    BST* b = new BST(-1, nullptr);
+    BST* b = new BST();
     string type; cin >> type;
     while(type!="quit"){
         if(type=="insert"){
@@ -240,6 +258,7 @@ void bstTester(){
             int n; cin >> n;
             b->del(n);
         }
+        cin >> type;
     }
 }
 
