@@ -59,7 +59,6 @@ int main()
                 mxg = max(cg, mxg);
                 mxb = max(cb, mxb);
                 cr = 0, cg = 0, cb = 0;
-                
             }
         }
         // cout << cr << ln;
