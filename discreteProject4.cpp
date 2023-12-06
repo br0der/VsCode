@@ -18,8 +18,6 @@ typedef vector<vector<double>> vvdouble;
 #define pb push_back
 string ln = "\n";
 
-
-
 ll randRun(){
     ll c = 0;
     while(rand()%2==1){
@@ -56,6 +54,10 @@ struct BST{
         right = nullptr;
     }
 
+    bool isLeaf(){
+        return key==-1;
+    }
+
     void insert(int k){
         if(key==-1){
             key = k;
@@ -63,33 +65,66 @@ struct BST{
             left = new BST();
             right = new BST();
             depth = 1;
+            return;
         }
         if(key==k) return;
         BST* nxt = key>k ? left : right;
         cout << (key>k ? "left" : "right") << ln;
         nxt->insert(k);
+        nxt->par = this;
         depth = max(left->depth, right->depth)+1;
     }
 
-    BST* find(int k){
+    BST* find(int k, bool print){
         if(key==-1 or key==k) return this;
         BST* nxt = key>k ? left : right;
-        cout << (key>k ? "left" : "right") << ln;
-        return nxt->find(k);
+        if(print) cout << (key>k ? "left" : "right") << ln;
+        return nxt->find(k, print);
+    }
+
+    BST* findNxt(int k, bool print){
+        BST* f = find(k, false);
+        if(not f->right->isLeaf()){
+            f = f->right;
+            if(print) cout << "right" << ln;
+            while(not f->left->isLeaf()){
+                f = f->left;
+                if(print) cout << "left" << ln;
+            }
+            return f;
+        }
+        else{
+            while(f->par!=nullptr){
+                if(f==f->par->left){
+                    if(print) cout << "up right" << ln;
+                    return f->par;
+                }
+                if(print) cout << "up left" << ln;
+                f = f->par;
+            }
+            return new BST();
+        }
     }
 
     void del(int k){
-        BST* f = find(k);
-        if(f->left->key==-1 and f->right->key==-1){
-            if(f->par==nullptr){
-                key = -1;
-                val = "";
-                depth = 0;
+        BST* f = find(k, false);
+        BST* nxt = findNxt(k, false);
+        if(f->right->isLeaf()){ // nxt is higher than f, and f has no right pointer
+            if(f->par->left==f){
+                f->par->left = f->left;
             }
             else{
-                if(f->key<f->par->key){
-                    f->par->left = f;
-                }
+                f->par->right = f->left;
+            }
+        }
+        else{ // nxt is lower than f, and does not have a left pointer
+            f->key = nxt->key;
+            f->val = nxt->val;
+            if(nxt->par->left==nxt){
+                nxt->par->left = nxt->right;
+            }
+            else{
+                nxt->par->right = nxt->right;
             }
         }
     }
@@ -98,6 +133,30 @@ struct BST{
 
     }
 };
+
+void bstTester(){
+    BST* b = new BST();
+    string type; cin >> type;
+    while(type!="quit"){
+        if(type=="insert"){
+            int n; cin >> n;
+            b->insert(n);
+        }
+        if(type=="find"){
+            int n; cin >> n;
+            b->find(n, true);
+        }
+        if(type=="delete"){
+            int n; cin >> n;
+            b->del(n);
+        }
+        if(type=="next"){
+            int n; cin >> n;
+            b->findNxt(n, true);
+        }
+        cin >> type;
+    }
+}
 
 struct SkipList{
     int key;
@@ -237,26 +296,6 @@ void skipListTester(){
         }
         if(type=="print"){
             sl->prnt();
-        }
-        cin >> type;
-    }
-}
-
-void bstTester(){
-    BST* b = new BST();
-    string type; cin >> type;
-    while(type!="quit"){
-        if(type=="insert"){
-            int n; cin >> n;
-            b->insert(n);
-        }
-        if(type=="find"){
-            int n; cin >> n;
-            cout << b->find(n)->key << ln;
-        }
-        if(type=="delete"){
-            int n; cin >> n;
-            b->del(n);
         }
         cin >> type;
     }
