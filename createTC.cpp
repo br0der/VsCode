@@ -1,6 +1,3 @@
-#pragma GCC optimize("Ofast")
-#pragma GCC target("sse,sse2,sse3,ssse3,sse4,popcnt,abm,mmx,avx,avx2,fma")
-#pragma GCC optimize("unroll-loops")
 #include <bits/stdc++.h> 
 #include <complex>
 #include <queue>
@@ -36,15 +33,24 @@ ll MOD = 0;
 #define fast_cin() ios_base::sync_with_stdio(false); cin.tie(NULL); cout.tie(NULL)
 #define all(x) (x).begin(), (x).end()
 #define sz(x) ((ll)(x).size())
- 
+
+int rnum(){
+    return rand();
+}
+
 int main()
 {
     #ifndef ONLINE_JUDGE
         freopen("./data/input.txt","w", stdout);
         // freopen("./data/alcatraz_tiny.in","w", stdout);
     #endif
-    for(int i = 1; i <= 22; i++){
-        cout << 6 << ' ' << i << endl;
+    cout << "100 100 1000" << endl;
+    vector<int> people(100, 0);
+    for(int i = 0; i < 1000; i++){
+        int person = rnum()%100;
+        while(people[person]==10) person = rnum()%100;
+        people[person]++;
+        cout << person+1 << ' ' << rnum()%10+1 << endl;
     }
     return 0;
 }
