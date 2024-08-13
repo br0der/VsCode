@@ -14,9 +14,9 @@ typedef pair<double,double> pdd;
 typedef vector<ll> vlong;
 typedef vector<int> vint;
 typedef vector<double> vdouble;
-typedef vector<vector<int>> vvint;
-typedef vector<vector<ll>> vvlong;
-typedef vector<vector<double>> vvdouble;
+typedef vector<vector<int> > vvint;
+typedef vector<vector<ll> > vvlong;
+typedef vector<vector<double> > vvdouble;
 ll MOD = 0;
 #define INF 2e18
 #define fast_cin() ios_base::sync_with_stdio(false); cin.tie(NULL); cout.tie(NULL)
@@ -28,19 +28,37 @@ string ln = "\n";
 
 void solve()
 {
-    
+    int n; cin >> n;
+    vlong lis(n); for(int _ = 0; _ < n; _++) cin >> lis[_];
+    vlong evens;
+    ll mxOdd = -1;
+    for(int i = 0; i < n; i++){
+        if (lis[i]%2==1) mxOdd = max(mxOdd, lis[i]);
+        else evens.pb(lis[i]);
+    }
+    if (sz(evens)==n) {
+        cout << 0 << ln;
+        return;
+    }
+    sort(all(evens));
+    int out = 0;
+    assert(mxOdd!=-1);
+    // if (evens[0] > mxOdd) out++, mxOdd+=evens[0];
+    for(int i = 0; i < sz(evens); i++){
+        if (evens[i] > mxOdd) out+=2, mxOdd+=evens[sz(evens)-1];
+        else out++;
+        mxOdd+=evens[i];
+    }
+    cout << out << ln;
 }
 int main()
 {
-    ios_base::sync_with_stdio(false); cin.tie(NULL); cout.tie(NULL);
+    fast_cin();
     #ifndef ONLINE_JUDGE
         freopen("../../data/input.txt","r", stdin);
         freopen("../../data/output.txt","w", stdout);
     #endif
-    ll t;
-    cin >> t;
-    for(int it=1;it<=t;it++) {
-        solve();
-    }
+    ll t; cin >> t;
+    while(t--) solve();
     return 0;
 }

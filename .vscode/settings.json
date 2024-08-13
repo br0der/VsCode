@@ -71,7 +71,13 @@
         "typeinfo": "cpp",
         "ranges": "cpp",
         "span": "cpp",
-        "string_view": "cpp"
+        "string_view": "cpp",
+        "ios": "cpp",
+        "__split_buffer": "cpp",
+        "filesystem": "cpp",
+        "queue": "cpp",
+        "stack": "cpp",
+        "__tree": "cpp"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }
