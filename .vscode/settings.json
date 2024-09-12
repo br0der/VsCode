@@ -77,7 +77,9 @@
         "filesystem": "cpp",
         "queue": "cpp",
         "stack": "cpp",
-        "__tree": "cpp"
+        "__tree": "cpp",
+        "__locale": "cpp",
+        "format": "cpp"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }
